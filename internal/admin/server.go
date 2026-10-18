@@ -1,9 +1,11 @@
 package admin
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -70,6 +72,7 @@ func fail(w http.ResponseWriter, err error) {
 	respond(w, status, map[string]any{"error": err.Error()})
 }
 func New(c Config) http.Handler {
+	login := newLoginManager(c.Accounts)
 	prefix := c.Prefix
 	if prefix == "" {
 		prefix = "/app/fnmusic-go"
@@ -85,6 +88,10 @@ func New(c Config) http.Handler {
 				http.Error(w, "administrator login required", http.StatusForbidden)
 				return
 			}
+			// Route account subresources before the generic DELETE account handler.
+			if strings.HasPrefix(r.URL.Path, "/api/accounts/") && handleMusicboxSubresource(w, r, login) {
+				return
+			}
 			switch {
 			case r.URL.Path == "/api/status" && r.Method == http.MethodGet:
 				enabled, mode, selected, amount := false, "isolated", "", 0
@@ -98,7 +105,7 @@ func New(c Config) http.Handler {
 					selected = snap.SharedAccount
 					amount = len(snap.Accounts)
 				}
-				respond(w, 200, map[string]any{"version": "0.3.0-preview", "phase": "account-selection-preview", "source_enabled": enabled, "netease_mode": mode, "shared_account": selected, "accounts_count": amount, "socket": takeover.Inspect(c.Socket), "checked_at": time.Now().UTC().Format(time.RFC3339)})
+				respond(w, 200, map[string]any{"version": "0.4.0-preview", "phase": "login-playlists-preview", "source_enabled": enabled, "netease_mode": mode, "shared_account": selected, "accounts_count": amount, "socket": takeover.Inspect(c.Socket), "checked_at": time.Now().UTC().Format(time.RFC3339)})
 			case r.URL.Path == "/api/accounts" && r.Method == http.MethodGet:
 				if c.Accounts == nil {
 					respond(w, 200, accounts.Config{Isolation: true})
@@ -234,4 +241,59 @@ func New(c Config) http.Handler {
 		}
 		http.NotFound(w, r)
 	})
+}
+
+// handleMusicboxSubresource exposes account-specific QR and read-only playlists
+// only through the existing authenticated, administrator-only gateway.
+func handleMusicboxSubresource(w http.ResponseWriter, r *http.Request, l *loginManager) bool {
+	relative := strings.TrimPrefix(r.URL.Path, "/api/accounts/")
+	bits := strings.Split(relative, "/")
+	if len(bits) < 2 || bits[0] == "" {
+		return false
+	}
+	accountID := bits[0]
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	var result any
+	var err error
+	status := 200
+	switch {
+	case len(bits) == 3 && bits[1] == "auth" && bits[2] == "status" && r.Method == http.MethodGet:
+		result, err = l.status(ctx, accountID)
+	case len(bits) == 3 && bits[1] == "auth" && bits[2] == "qr" && r.Method == http.MethodPost:
+		if !managementRequest(r) {
+			http.Error(w, "JSON management request required", 403)
+			return true
+		}
+		result, err = l.begin(ctx, accountID)
+	case len(bits) == 3 && bits[1] == "auth" && bits[2] == "check" && r.Method == http.MethodPost:
+		if !managementRequest(r) {
+			http.Error(w, "JSON management request required", 403)
+			return true
+		}
+		result, err = l.poll(ctx, accountID)
+	case len(bits) == 2 && bits[1] == "playlists" && r.Method == http.MethodGet:
+		result, err = l.playlists(ctx, accountID)
+	case len(bits) == 4 && bits[1] == "playlists" && bits[3] == "tracks" && r.Method == http.MethodGet:
+		result, err = l.tracks(ctx, accountID, bits[2])
+	default:
+		return false
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, accounts.ErrNotFound):
+			status = 404
+		case errors.Is(err, errPollFast):
+			status = 429
+		case errors.Is(err, errNoChallenge):
+			status = 410
+		default:
+			status = 502
+		}
+		// Do not echo upstream provider responses or account tokens into UI.
+		respond(w, status, map[string]any{"error": fmt.Sprintf("operation failed: %s", err.Error())})
+		return true
+	}
+	respond(w, 200, result)
+	return true
 }
