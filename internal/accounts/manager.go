@@ -175,30 +175,20 @@ func clone(c Config) Config {
 }
 func (m *Manager) Snapshot() Config { m.mu.RLock(); defer m.mu.RUnlock(); return clone(m.config) }
 
-// CacheNamespace includes the backend identity so deleting/recreating an account
-// with the same ID but a different MusicBox instance cannot reuse its metadata.
-func (m *Manager) CacheNamespace(id string) string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, a := range m.config.Accounts {
-		if a.ID == id {
-			sum := sha256.Sum256([]byte(a.BridgeURL))
-			return id + ":" + hex.EncodeToString(sum[:8])
-		}
-	}
-	return id + ":missing"
-}
 func (m *Manager) IsConfigured() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.config.Accounts) > 0
 }
 func (m *Manager) Resolve(fnOSGUID string) (provider.Adapter, string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.resolveLocked(fnOSGUID)
+}
+func (m *Manager) resolveLocked(fnOSGUID string) (provider.Adapter, string, bool) {
 	if !userPattern.MatchString(fnOSGUID) || fnOSGUID == "shared" {
 		return nil, "", false
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	accountID := ""
 	if m.config.Isolation {
 		accountID = m.config.Bindings[fnOSGUID]
@@ -211,6 +201,25 @@ func (m *Manager) Resolve(fnOSGUID string) (provider.Adapter, string, bool) {
 	adapter := m.adapters[accountID]
 	return adapter, accountID, adapter != nil
 }
+
+// ResolveScoped provides both the selected source and its cache namespace
+// under ONE lock, so an administrator switch cannot mix two account versions.
+func (m *Manager) ResolveScoped(fnOSGUID string) (provider.Adapter, string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	a, id, ok := m.resolveLocked(fnOSGUID)
+	if !ok {
+		return nil, "", false
+	}
+	for _, row := range m.config.Accounts {
+		if row.ID == id {
+			sum := sha256.Sum256([]byte(row.BridgeURL))
+			return a, id + ":" + hex.EncodeToString(sum[:8]), true
+		}
+	}
+	return nil, "", false
+}
+
 func (m *Manager) update(mut func(*Config) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
