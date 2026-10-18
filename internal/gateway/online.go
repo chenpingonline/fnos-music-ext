@@ -31,11 +31,12 @@ func (g *Gateway) sourceFor(user provider.User) (provider.Adapter, string, bool)
 		return nil, "", false
 	}
 	if g.accounts != nil {
-		a, id, ok := g.accounts.Resolve(user.FnOSGUID)
-		if namespace, yes := g.accounts.(interface{ CacheNamespace(string) string }); yes {
-			id = namespace.CacheNamespace(id)
+		if scoped, ok := g.accounts.(interface {
+			ResolveScoped(string) (provider.Adapter, string, bool)
+		}); ok {
+			return scoped.ResolveScoped(user.FnOSGUID)
 		}
-		return a, id, ok
+		return g.accounts.Resolve(user.FnOSGUID)
 	}
 	if g.online != nil && user.FnOSGUID == g.ownerGUID {
 		return g.online, "legacy", true
