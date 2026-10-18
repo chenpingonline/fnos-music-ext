@@ -8,7 +8,7 @@ const state=ref<Status|null>(null)
 const config=ref<Accounts>({isolation:true,shared_account:'',accounts:[],bindings:{}})
 const selected=ref<'status'|'accounts'|'help'>('accounts')
 const busy=ref(false),error=ref(''),notice=ref('')
-const accountID=ref(''),accountName=ref(''),bridgeURL=ref('http://127.0.0.1:8770')
+const accountID=ref(''),accountName=ref(''),bridgeURL=ref('http://127.0.0.1:8770'), providerMode=ref<'native'|'musicbox'>('native')
 const userGUID=ref(''),privateAccount=ref('')
 type LoginStatus={state:string;logged_in:boolean}
 type QRChallenge={qr_url:string;qr_ascii?:string}
@@ -28,7 +28,7 @@ async function refresh(){busy.value=true;error.value='';try{const [s,c]=await Pr
 async function mutation(method:string,path:string,body:unknown){busy.value=true;error.value='';notice.value='';try{const r=await fetch(api+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-FnMusic-Admin':'1'},body:JSON.stringify(body)});if(!r.ok){const err=await r.json().catch(()=>({error:'HTTP '+r.status}));throw new Error(err.error||'HTTP '+r.status)}await refresh();notice.value='保存成功，已实时生效'}catch(e){error.value=String(e)}finally{busy.value=false}}
 function toggle(isolation:boolean){mutation('PUT','/accounts/mode',{isolation})}
 function selectShared(account_id:string){mutation('PUT','/accounts/shared',{account_id})}
-function add(){mutation('POST','/accounts',{id:accountID.value.trim(),name:accountName.value.trim(),bridge_url:bridgeURL.value.trim()});accountID.value='';accountName.value=''}
+function add(){const id=accountID.value.trim();mutation('POST','/accounts',{id,name:accountName.value.trim(),bridge_url:providerMode.value==='native'?'native://netease/'+id:bridgeURL.value.trim()})}
 function remove(id:string){if(confirm('删除该音源账号及其所有绑定？此操作不会清除 MusicBox 服务中的登录态。'))mutation('DELETE','/accounts/'+encodeURIComponent(id),{})}
 function bind(){const user=userGUID.value.trim();if(!user)return;mutation('PUT','/accounts/bindings/'+encodeURIComponent(user),{account_id:privateAccount.value})}
 onMounted(refresh)
@@ -37,7 +37,7 @@ onMounted(refresh)
 <div class="layout">
  <aside><div class="brand"><span class="logo">♫</span> fnMusic <small>GO</small></div>
   <nav><button :class="{active:selected==='status'}" @click="selected='status'">运行概览</button><button :class="{active:selected==='accounts'}" @click="selected='accounts'">网易云账号管理</button><button :class="{active:selected==='help'}" @click="selected='help'">帮助与诊断</button></nav>
-  <footer>Go + Vue 3 · v0.4.0 预览</footer>
+  <footer>Go + Vue 3 · v0.5.0 预览</footer>
  </aside>
  <main>
   <header><div><label>FNOS MUSIC EXTENSION</label><h1>{{selected==='accounts'?'网易云账号管理':selected==='status'?'运行概览':'帮助与诊断'}}</h1><p>原生飞牛音乐扩展 · 账号访问模式由管理员控制</p></div><button class="secondary" @click="refresh" :disabled="busy">{{busy?'处理中…':'刷新'}}</button></header>
@@ -49,17 +49,17 @@ onMounted(refresh)
     <div v-if="!config.isolation" class="formrow"><div class="grow"><label>当前共享账号</label><select :value="config.shared_account" :disabled="busy" @change="selectShared(($event.target as HTMLSelectElement).value)"><option value="">不启用在线账号</option><option v-for="a in config.accounts" :key="a.id" :value="a.id">{{a.name}}</option></select></div><div class="detail">已选：<b>{{currentShared}}</b></div></div>
     <div v-if="config.isolation"><h4>用户与账号绑定</h4><div class="formrow"><div class="grow"><label>飞牛用户 GUID</label><input v-model="userGUID" placeholder="输入已验证的飞牛用户 GUID"></div><div class="grow"><label>网易云账号</label><select v-model="privateAccount"><option value="">解除绑定</option><option v-for="a in config.accounts" :key="a.id" :value="a.id">{{a.name}}</option></select></div><button class="primary" :disabled="busy||!userGUID.trim()" @click="bind">保存绑定</button></div><div class="binding" v-for="(id,guid) in config.bindings" :key="guid"><code>{{guid}}</code><span>→</span><b>{{config.accounts.find(a=>a.id===id)?.name||id}}</b></div></div>
    </section>
-   <section><h3>已添加的网易云账号</h3><p>每个账号对应一个独立运行的 MusicBox HTTP 服务和登录态；仅接受 127.0.0.1 等本机地址。</p><div v-for="a in config.accounts" :key="a.id" class="account"><div><strong>{{a.name}}</strong><small>{{a.id}} · {{a.bridge_url}}</small></div><div class="actions"><button class="secondary" :disabled="busy" @click="selectAccount(a.id);statusLogin()">登录 / 歌单</button><button class="delete" :disabled="busy" @click="remove(a.id)">删除</button></div></div><p v-if="!config.accounts.length" class="empty">暂无账号，请先在下方添加</p></section>
+   <section><h3>已添加的网易云账号</h3><p>原生 Go 模式无需 Python / Docker；原 MusicBox HTTP 桥接仍可作为兼容选项。不同账号的登录态分别保存。</p><div v-for="a in config.accounts" :key="a.id" class="account"><div><strong>{{a.name}}</strong><small>{{a.id}} · {{a.bridge_url}}</small></div><div class="actions"><button class="secondary" :disabled="busy" @click="selectAccount(a.id);statusLogin()">登录 / 歌单</button><button class="delete" :disabled="busy" @click="remove(a.id)">删除</button></div></div><p v-if="!config.accounts.length" class="empty">暂无账号，请先在下方添加</p></section>
    <section v-if="focusAccount"><div class="section-title"><div><h3>账号登录与个人歌单</h3><p>当前账号：{{config.accounts.find(a=>a.id===focusAccount)?.name||focusAccount}}</p></div><button class="secondary" @click="selectAccount('')">关闭</button></div>
      <div class="formrow"><button class="primary" :disabled="busy" @click="startLogin">生成登录二维码</button><button class="secondary" :disabled="busy||!qr" @click="checkLogin">检查扫码结果</button><button class="secondary" :disabled="busy" @click="statusLogin">检查登录状态</button><span>状态：{{auth?.state||'未检测'}}</span></div>
-     <div v-if="qr" class="mode"><p>请用网易云音乐 App 扫码。二维码由 MusicBox 登录挑战生成；也可点击官方登录链接。</p><pre v-if="qr.qr_ascii" class="qr-ascii">{{qr.qr_ascii}}</pre><a :href="qr.qr_url" target="_blank" rel="noreferrer noopener">打开网易云扫码链接</a></div>
+     <div v-if="qr" class="mode"><p>请用网易云音乐 App 扫码；原生模式直接向网易云接口请求登录挑战，兼容模式使用 MusicBox。</p><pre v-if="qr.qr_ascii" class="qr-ascii">{{qr.qr_ascii}}</pre><a :href="qr.qr_url" target="_blank" rel="noreferrer noopener">打开网易云扫码链接</a></div>
      <div class="formrow"><button class="secondary" :disabled="busy" @click="loadPlaylists">查看自建歌单</button><small>仅展示当前网易云账号创建的歌单；不会修改网易云数据</small></div>
      <div v-for="p in playlists" :key="p.id" class="account"><div><strong>{{p.title}}</strong><small>{{p.track_count}} 首 · 只读</small></div><button class="secondary" :disabled="busy" @click="loadPlaylistTracks(p.id)">查看歌曲</button></div>
      <div v-if="chosenPlaylist"><h4>歌单曲目</h4><div v-for="t in playlistTracks.slice(0,100)" :key="t.id" class="binding">{{t.title}} — {{t.artists.join(' / ')}}</div></div>
    </section>
-   <section><h3>添加网易云账号</h3><p>先为每个账号启动独立的本地 MusicBox HTTP 服务，再添加连接；添加后可以在上方管理面板扫码登录。</p><div class="formgrid"><div><label>账号标识</label><input v-model="accountID" placeholder="如 netease_home"></div><div><label>显示名称</label><input v-model="accountName" placeholder="如 家庭网易云"></div><div class="wide"><label>MusicBox 本机地址</label><input v-model="bridgeURL" placeholder="http://127.0.0.1:8770"></div></div><button class="primary" :disabled="busy||!accountID.trim()||!accountName.trim()" @click="add">添加账号</button></section>
+   <section><h3>添加网易云账号</h3><p>推荐 Go 原生模式（无需单独启动 Python 服务）；若上游协议变更，可切回独立 MusicBox 桥接。</p><div class="formgrid"><div class="wide"><label>实现方式</label><select v-model="providerMode"><option value="native">Go 原生网易云（推荐 · 实验性协议）</option><option value="musicbox">MusicBox 本地 HTTP 兼容桥接</option></select></div><div><label>账号标识</label><input v-model="accountID" placeholder="如 netease_home"></div><div><label>显示名称</label><input v-model="accountName" placeholder="如 家庭网易云"></div><div class="wide" v-if="providerMode==='musicbox'"><label>MusicBox 本机地址</label><input v-model="bridgeURL" placeholder="http://127.0.0.1:8770"></div><div class="wide" v-else><label>原生配置地址（自动生成）</label><input :value="'native://netease/'+accountID.trim()" readonly><small>实际凭证存放在 NAS 本地私有目录，删除账号会同时清除该账号登录凭证。</small></div></div><button class="primary" :disabled="busy||!accountID.trim()||!accountName.trim()" @click="add">添加账号</button></section>
   </template>
-  <template v-else-if="selected==='help'"><section><h3>部署须知</h3><p>这版已具备账号模式切换、绑定和持久化，但仍依赖独立的 MusicBox HTTP 服务。现在可以通过 MusicBox 桥接执行扫码登录、检查状态并只读预览自建歌单；尚未实现完全独立的 Go 原生网易云协议，也没有通过真实 fnOS 安装验证。</p><p>配置文件：<code>/var/lib/fnmusic-go/accounts.json</code>（仅本机 root 可读写，0600）。</p><pre>sudo journalctl -u fnmusic-go -n 100 --no-pager</pre></section></template>
+  <template v-else-if="selected==='help'"><section><h3>部署须知</h3><p>Go 原生模式已实现实验性网易云 EAPI 协议客户端，可搜索、播放、扫码和只读展示自建歌单；网易云非公开协议可能随时变化。MusicBox 桥接仍可使用。尚未通过真实 fnOS 或网易云实网验收。</p><p>配置文件：<code>/var/lib/fnmusic-go/accounts.json</code>（仅本机 root 可读写，0600）。</p><pre>sudo journalctl -u fnmusic-go -n 100 --no-pager</pre></section></template>
   <p class="footnote">共享模式是主动授权的账号共享，不等同于匿名访问。用户身份仍必须由飞牛官方接口验证。仅在拥有合法使用权限的账号及音源上启用。</p>
  </main>
 </div>
