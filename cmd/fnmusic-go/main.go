@@ -90,12 +90,17 @@ func serve(cfg takeover.Config, adminPath string, trustedUID int, accountsFile, 
 	// socket mode is promoted after the official socket has been safely staged.
 	gw := gateway.New(cfg.Upstream)
 	// Persisted account registry replaces the old single-owner MusicBox flag.
+	_, stateStatErr := os.Stat(accountsFile)
+	if stateStatErr != nil && !errors.Is(stateStatErr, os.ErrNotExist) {
+		return stateStatErr
+	}
+	freshState := errors.Is(stateStatErr, os.ErrNotExist)
 	manager, err := accounts.New(accountsFile, nil)
 	if err != nil {
 		return fmt.Errorf("music account settings: %w", err)
 	}
 	// One-time migration only on a fresh registry; never overwrite user choices.
-	if !manager.IsConfigured() && (bridgeURL != "" || ownerGUID != "") {
+	if freshState && !manager.IsConfigured() && (bridgeURL != "" || ownerGUID != "") {
 		if bridgeURL == "" || ownerGUID == "" || ownerGUID == "shared" {
 			return errors.New("legacy MusicBox requires both URL and verified fnOS user GUID")
 		}
