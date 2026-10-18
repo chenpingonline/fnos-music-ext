@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chenpingonline/fnos-music-ext/internal/accounts"
 	"github.com/chenpingonline/fnos-music-ext/internal/admin"
 	"github.com/chenpingonline/fnos-music-ext/internal/gateway"
 	"github.com/chenpingonline/fnos-music-ext/internal/netease"
@@ -34,7 +35,7 @@ func run(args []string) error {
 		return errors.New("usage: fnmusic-go serve|status|restore|version [flags]")
 	}
 	if args[0] == "version" {
-		fmt.Println("fnmusic-go v0.2.0-preview")
+		fmt.Println("fnmusic-go v0.3.0-preview")
 		return nil
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
@@ -45,6 +46,7 @@ func run(args []string) error {
 	adminSocket := f.String("admin-socket", "", "fnOS desktop gateway socket (serve only)")
 	gatewayUID := f.Int("gateway-uid", 0, "trusted fnOS gateway process UID; default 0")
 	musicboxURL := f.String("netease-url", os.Getenv("FNMUSIC_GO_NETEASE_URL"), "loopback MusicBox REST API URL; optional")
+	accountsFile := f.String("account-state", "/var/lib/fnmusic-go/accounts.json", "private JSON account configuration (0600)")
 	neteaseUser := f.String("netease-user-guid", os.Getenv("FNMUSIC_GO_NETEASE_USER_GUID"), "verified fnOS user GUID permitted to use the MusicBox instance; required to enable")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
@@ -58,12 +60,12 @@ func run(args []string) error {
 	case "restore":
 		return takeover.Restore(cfg)
 	case "serve":
-		return serve(cfg, *adminSocket, *gatewayUID, *musicboxURL, *neteaseUser)
+		return serve(cfg, *adminSocket, *gatewayUID, *accountsFile, *musicboxURL, *neteaseUser)
 	default:
 		return fmt.Errorf("unknown command %s", strconv.Quote(args[0]))
 	}
 }
-func serve(cfg takeover.Config, adminPath string, trustedUID int, bridgeURL, ownerGUID string) error {
+func serve(cfg takeover.Config, adminPath string, trustedUID int, accountsFile, bridgeURL, ownerGUID string) error {
 	if adminPath == "" {
 		return errors.New("--admin-socket must be provided, expected within app target directory")
 	}
@@ -87,16 +89,27 @@ func serve(cfg takeover.Config, adminPath string, trustedUID int, bridgeURL, own
 	// The public official socket must retain the same accessibility as the original one;
 	// socket mode is promoted after the official socket has been safely staged.
 	gw := gateway.New(cfg.Upstream)
-	if bridgeURL != "" || ownerGUID != "" {
+	// Persisted account registry replaces the old single-owner MusicBox flag.
+	manager, err := accounts.New(accountsFile, nil)
+	if err != nil {
+		return fmt.Errorf("music account settings: %w", err)
+	}
+	// One-time migration only on a fresh registry; never overwrite user choices.
+	if !manager.IsConfigured() && (bridgeURL != "" || ownerGUID != "") {
 		if bridgeURL == "" || ownerGUID == "" || ownerGUID == "shared" {
-			return errors.New("netease requires both --netease-url and --netease-user-guid; refusing a global/shared account")
+			return errors.New("legacy MusicBox requires both URL and verified fnOS user GUID")
 		}
-		bridge, err := netease.NewBridge(bridgeURL)
-		if err != nil {
+		if _, err = netease.NewBridge(bridgeURL); err != nil {
 			return err
 		}
-		gw.SetOnline(bridge, ownerGUID)
+		if err = manager.Add(accounts.Account{ID: "legacy", Name: "Imported MusicBox", BridgeURL: bridgeURL}); err != nil {
+			return err
+		}
+		if err = manager.Bind(ownerGUID, "legacy"); err != nil {
+			return err
+		}
 	}
+	gw.SetAccounts(manager)
 	defer gw.Close()
 	musicSrv := &http.Server{Handler: gw, ReadHeaderTimeout: 10 * time.Second}
 	musicDone := make(chan error, 1)
@@ -118,7 +131,7 @@ func serve(cfg takeover.Config, adminPath string, trustedUID int, bridgeURL, own
 	if err = os.Chmod(adminPath, 0666); err != nil {
 		return err
 	}
-	admSrv := &http.Server{Handler: admin.New(admin.Config{Socket: cfg, NeteaseConfigured: gw.OnlineEnabled(), NeteaseOwner: gw.CurrentOwner()}), ReadHeaderTimeout: 10 * time.Second}
+	admSrv := &http.Server{Handler: admin.New(admin.Config{Socket: cfg, Accounts: manager}), ReadHeaderTimeout: 10 * time.Second}
 	admDone := make(chan error, 1)
 	go func() { admDone <- admSrv.Serve(onlyUIDListener{Listener: al, uid: uint32(trustedUID)}) }()
 	// Before publish the proxy is live on a private staging pathname.
