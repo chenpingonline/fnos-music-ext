@@ -57,9 +57,12 @@ type Lyrics struct {
 	TranslatedLRC string
 }
 type Playlist struct {
-	ID, Title, CoverURL string
-	Tracks              []Track
-	ReadOnly            bool
+	ID         string  `json:"id"`
+	Title      string  `json:"title"`
+	CoverURL   string  `json:"cover_url"`
+	Tracks     []Track `json:"tracks,omitempty"`
+	TrackCount int     `json:"track_count"`
+	ReadOnly   bool    `json:"read_only"`
 }
 
 // Adapter deliberately requires a verified fnOS user; provider entitlement is
