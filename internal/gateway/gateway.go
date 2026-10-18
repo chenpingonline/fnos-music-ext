@@ -19,6 +19,7 @@ type Gateway struct {
 	client    *http.Client
 	online    provider.Adapter
 	ownerGUID string
+	accounts  AccountResolver
 	cache     *trackCache
 }
 
@@ -42,7 +43,7 @@ func New(upstream string) *Gateway {
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/_ext/livez":
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "fnmusic-go", "version": "0.2.0-preview"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "fnmusic-go", "version": "0.3.0-preview"})
 		return
 	case "/_ext/healthz":
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://trim-music/music/api/v1/user/me", nil)
@@ -65,7 +66,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Online interception is opt-in and bound to one verified fnOS account.
-	if g.online != nil && g.ownerGUID != "" && g.serveOnline(w, r) {
+	if (g.accounts != nil || (g.online != nil && g.ownerGUID != "")) && g.serveOnline(w, r) {
 		return
 	}
 	// Official music API fallback is unchanged on any provider failure.
