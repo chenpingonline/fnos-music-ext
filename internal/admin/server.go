@@ -105,7 +105,7 @@ func New(c Config) http.Handler {
 					selected = snap.SharedAccount
 					amount = len(snap.Accounts)
 				}
-				respond(w, 200, map[string]any{"version": "0.4.0-preview", "phase": "login-playlists-preview", "source_enabled": enabled, "netease_mode": mode, "shared_account": selected, "accounts_count": amount, "socket": takeover.Inspect(c.Socket), "checked_at": time.Now().UTC().Format(time.RFC3339)})
+				respond(w, 200, map[string]any{"version": "0.5.0-preview", "phase": "go-native-eapi-preview", "source_enabled": enabled, "netease_mode": mode, "shared_account": selected, "accounts_count": amount, "socket": takeover.Inspect(c.Socket), "checked_at": time.Now().UTC().Format(time.RFC3339)})
 			case r.URL.Path == "/api/accounts" && r.Method == http.MethodGet:
 				if c.Accounts == nil {
 					respond(w, 200, accounts.Config{Isolation: true})
