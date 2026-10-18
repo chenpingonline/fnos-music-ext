@@ -66,8 +66,8 @@ func TestMusicboxEndpoints(t *testing.T) {
 	if e != nil || !strings.Contains(lyrics.LRC, "你好") {
 		t.Fatalf("lyrics=%+v err=%v", lyrics, e)
 	}
-	if _, e := a.ListPlaylists(context.Background(), user()); e != ErrUnsupported {
-		t.Fatal(e)
+	if _, e := a.ListPlaylists(context.Background(), user()); e == nil {
+		t.Fatal("playlist request should fail when test server omits endpoint")
 	}
 }
 func TestMediaSafety(t *testing.T) {
