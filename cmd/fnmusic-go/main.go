@@ -35,7 +35,7 @@ func run(args []string) error {
 		return errors.New("usage: fnmusic-go serve|status|restore|version [flags]")
 	}
 	if args[0] == "version" {
-		fmt.Println("fnmusic-go v0.4.0-preview")
+		fmt.Println("fnmusic-go v0.5.0-preview")
 		return nil
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
