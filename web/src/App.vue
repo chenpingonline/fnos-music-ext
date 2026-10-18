@@ -1,45 +1,50 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-interface State {
- version:string;phase:string;source_enabled:boolean;netease_mode:string;netease_owner:string;
- socket:{journal:boolean;target_state:unknown;upstream_state:unknown};checked_at:string
-}
-const state=ref<State|null>(null)
-const error=ref('')
-const loading=ref(false)
-const section=ref<'status'|'source'|'help'>('status')
-async function refresh(){loading.value=true;error.value='';try{const r=await fetch('/app/fnmusic-go/api/status',{credentials:'same-origin',cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);state.value=await r.json()}catch(e){error.value=String(e)}finally{loading.value=false}}
+import { computed, onMounted, ref } from 'vue'
+type Account={id:string;name:string;bridge_url:string}
+type Accounts={isolation:boolean;shared_account:string;accounts:Account[];bindings:Record<string,string>}
+type Status={version:string;source_enabled:boolean;netease_mode:string;shared_account:string;accounts_count:number;socket:{journal:boolean}}
+const api='/app/fnmusic-go/api'
+const state=ref<Status|null>(null)
+const config=ref<Accounts>({isolation:true,shared_account:'',accounts:[],bindings:{}})
+const selected=ref<'status'|'accounts'|'help'>('accounts')
+const busy=ref(false),error=ref(''),notice=ref('')
+const accountID=ref(''),accountName=ref(''),bridgeURL=ref('http://127.0.0.1:8770')
+const userGUID=ref(''),privateAccount=ref('')
+const currentShared=computed(()=>config.value.accounts.find(a=>a.id===config.value.shared_account)?.name||'未选择')
+async function get<T>(path:string):Promise<T>{const r=await fetch(api+path,{credentials:'same-origin',cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);return await r.json()}
+async function refresh(){busy.value=true;error.value='';try{const [s,c]=await Promise.all([get<Status>('/status'),get<Accounts>('/accounts')]);state.value=s;config.value=c}catch(e){error.value=String(e)}finally{busy.value=false}}
+async function mutation(method:string,path:string,body:unknown){busy.value=true;error.value='';notice.value='';try{const r=await fetch(api+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-FnMusic-Admin':'1'},body:JSON.stringify(body)});if(!r.ok){const err=await r.json().catch(()=>({error:'HTTP '+r.status}));throw new Error(err.error||'HTTP '+r.status)}await refresh();notice.value='保存成功，已实时生效'}catch(e){error.value=String(e)}finally{busy.value=false}}
+function toggle(isolation:boolean){mutation('PUT','/accounts/mode',{isolation})}
+function selectShared(account_id:string){mutation('PUT','/accounts/shared',{account_id})}
+function add(){mutation('POST','/accounts',{id:accountID.value.trim(),name:accountName.value.trim(),bridge_url:bridgeURL.value.trim()});accountID.value='';accountName.value=''}
+function remove(id:string){if(confirm('删除该音源账号及其所有绑定？此操作不会清除 MusicBox 服务中的登录态。'))mutation('DELETE','/accounts/'+encodeURIComponent(id),{})}
+function bind(){const user=userGUID.value.trim();if(!user)return;mutation('PUT','/accounts/bindings/'+encodeURIComponent(user),{account_id:privateAccount.value})}
 onMounted(refresh)
 </script>
 <template>
 <div class="layout">
- <aside>
-  <div class="brand"><span class="brand-icon">♫</span> fnMusic <small>GO</small></div>
-  <nav>
-   <button :class="{active:section==='status'}" @click="section='status'">运行概览</button>
-   <button :class="{active:section==='source'}" @click="section='source'">网易云音源</button>
-   <button :class="{active:section==='help'}" @click="section='help'">安装与诊断</button>
-  </nav>
-  <footer>Go + Vue 3 · v0.2.0 预览</footer>
+ <aside><div class="brand"><span class="logo">♫</span> fnMusic <small>GO</small></div>
+  <nav><button :class="{active:selected==='status'}" @click="selected='status'">运行概览</button><button :class="{active:selected==='accounts'}" @click="selected='accounts'">网易云账号管理</button><button :class="{active:selected==='help'}" @click="selected='help'">帮助与诊断</button></nav>
+  <footer>Go + Vue 3 · v0.3.0 预览</footer>
  </aside>
  <main>
-  <header><div><label>FNOS MUSIC EXTENSION</label><h1>{{section==='status'?'运行概览':section==='source'?'网易云音源':'安装与诊断'}}</h1><p>在官方飞牛音乐中使用在线音乐扩展</p></div><button class="primary" @click="refresh" :disabled="loading">{{loading?'检测中…':'刷新状态'}}</button></header>
-  <p v-if="error" class="error">{{error}}</p>
-  <template v-if="section==='status'">
-   <div class="cards"><section><label>原生代理</label><h2>{{state?.socket?.journal?'已接管':'未接管'}}</h2><p>Socket 所有权保护</p></section><section><label>网易云音源</label><h2>{{state?.source_enabled?'已配置':'未配置'}}</h2><p>单用户隔离 · MusicBox 桥接</p></section><section><label>版本</label><h2>{{state?.version||'—'}}</h2><p>原生 Go 服务</p></section></div>
-   <section class="details"><h3>运行状态</h3><pre>{{JSON.stringify(state,null,2)}}</pre></section>
+  <header><div><label>FNOS MUSIC EXTENSION</label><h1>{{selected==='accounts'?'网易云账号管理':selected==='status'?'运行概览':'帮助与诊断'}}</h1><p>原生飞牛音乐扩展 · 账号访问模式由管理员控制</p></div><button class="secondary" @click="refresh" :disabled="busy">{{busy?'处理中…':'刷新'}}</button></header>
+  <p class="error" v-if="error">{{error}}</p><p class="notice success" v-if="notice">{{notice}}</p>
+  <template v-if="selected==='status'"><div class="cards"><section><label>官方音乐代理</label><h2>{{state?.socket?.journal?'已接管':'未接管'}}</h2></section><section><label>已添加网易云账号</label><h2>{{state?.accounts_count??0}}</h2></section><section><label>账号模式</label><h2>{{config.isolation?'用户隔离':'共享账号'}}</h2></section></div><section><h3>诊断状态</h3><pre>{{JSON.stringify(state,null,2)}}</pre></section></template>
+  <template v-if="selected==='accounts'">
+   <section><div class="section-title"><div><h3>账号隔离</h3><p>决定每个飞牛用户如何选择网易云账号</p></div><label class="toggle"><input type="checkbox" :checked="config.isolation" :disabled="busy" @change="toggle(($event.target as HTMLInputElement).checked)"><span></span></label></div>
+    <div class="mode"><b>{{config.isolation?'独立账号模式':'共享账号模式'}}</b><p>{{config.isolation?'每位飞牛用户只使用管理员为其绑定的网易云账号，未绑定者只看到本地音乐。':'所有通过飞牛身份验证的用户使用管理员选择的同一个网易云账号。共享账号的歌单、历史与权益可能被共同使用。'}}</p></div>
+    <div v-if="!config.isolation" class="formrow"><div class="grow"><label>当前共享账号</label><select :value="config.shared_account" :disabled="busy" @change="selectShared(($event.target as HTMLSelectElement).value)"><option value="">不启用在线账号</option><option v-for="a in config.accounts" :key="a.id" :value="a.id">{{a.name}}</option></select></div><div class="detail">已选：<b>{{currentShared}}</b></div></div>
+    <div v-if="config.isolation"><h4>用户与账号绑定</h4><div class="formrow"><div class="grow"><label>飞牛用户 GUID</label><input v-model="userGUID" placeholder="输入已验证的飞牛用户 GUID"></div><div class="grow"><label>网易云账号</label><select v-model="privateAccount"><option value="">解除绑定</option><option v-for="a in config.accounts" :key="a.id" :value="a.id">{{a.name}}</option></select></div><button class="primary" :disabled="busy||!userGUID.trim()" @click="bind">保存绑定</button></div><div class="binding" v-for="(id,guid) in config.bindings" :key="guid"><code>{{guid}}</code><span>→</span><b>{{config.accounts.find(a=>a.id===id)?.name||id}}</b></div></div>
+   </section>
+   <section><h3>已添加的网易云账号</h3><p>每个账号对应一个独立运行的 MusicBox HTTP 服务和登录态；仅接受 127.0.0.1 等本机地址。</p><div v-for="a in config.accounts" :key="a.id" class="account"><div><strong>{{a.name}}</strong><small>{{a.id}} · {{a.bridge_url}}</small></div><button class="delete" :disabled="busy" @click="remove(a.id)">删除</button></div><p v-if="!config.accounts.length" class="empty">暂无账号，请先在下方添加</p></section>
+   <section><h3>添加网易云账号</h3><p>先启动单独的 MusicBox HTTP 服务并完成登录，每个账号使用不同的本地端口。这里添加的是连接配置，不会自动获取账号密码。</p><div class="formgrid"><div><label>账号标识</label><input v-model="accountID" placeholder="如 netease_home"></div><div><label>显示名称</label><input v-model="accountName" placeholder="如 家庭网易云"></div><div class="wide"><label>MusicBox 本机地址</label><input v-model="bridgeURL" placeholder="http://127.0.0.1:8770"></div></div><button class="primary" :disabled="busy||!accountID.trim()||!accountName.trim()" @click="add">添加账号</button></section>
   </template>
-  <template v-if="section==='source'">
-   <section><h3>网易云 MusicBox 适配</h3><p>当前阶段实现在线歌曲搜索、音乐元数据、歌词、音频流与封面接口。需要单独运行上游 MusicBox HTTP 服务，且仅向绑定的飞牛用户开放。</p><div class="fact"><span>桥接状态</span><b>{{state?.source_enabled?'已配置（不代表上游可用）':'未配置'}}</b></div><div class="fact"><span>绑定用户 GUID</span><code>{{state?.netease_owner || '未绑定'}}</code></div><div class="fact"><span>扫码登录与私人歌单</span><span>v0.3 开发计划</span></div><p class="notice">此页面暂不写入配置。请由管理员在 NAS 的受限配置文件中设置，避免共享登录态泄露给其他飞牛用户。</p></section>
-  </template>
-  <template v-if="section==='help'">
-   <section><h3>诊断与安全</h3><p>代理停止应恢复官方音乐 Socket，网易云服务故障应仅影响在线功能。本预览版本未完成真实 fnOS 兼容验证。</p><pre>sudo journalctl -u fnmusic-go -n 100 --no-pager
-sudo cat /var/lib/fnmusic-go/provider.env</pre><p>配置文件可能包含个人标识，分享诊断日志前请检查并脱敏。</p></section>
-  </template>
-  <p class="footnote">v0.2.0 开发预览：网易云登录、原生 Go 协议解析、私人歌单、下载、AI 推荐尚未实现。</p>
+  <template v-else-if="selected==='help'"><section><h3>部署须知</h3><p>这版已具备账号模式切换、绑定和持久化，但仍依赖独立的 MusicBox HTTP 服务。尚未实现 Go 原生扫码登录，也没有通过真实 fnOS 安装验证。</p><p>配置文件：<code>/var/lib/fnmusic-go/accounts.json</code>（仅本机 root 可读写，0600）。</p><pre>sudo journalctl -u fnmusic-go -n 100 --no-pager</pre></section></template>
+  <p class="footnote">共享模式是主动授权的账号共享，不等同于匿名访问。用户身份仍必须由飞牛官方接口验证。仅在拥有合法使用权限的账号及音源上启用。</p>
  </main>
 </div>
 </template>
 <style scoped>
-:global(*){box-sizing:border-box}:global(body){margin:0;background:#f7f9fb;color:#203145;font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.layout{display:flex;min-height:100vh}aside{background:white;width:230px;border-right:1px solid #e9eef3;padding:28px 19px;display:flex;flex-direction:column}.brand{font-size:20px;font-weight:750}.brand-icon{display:inline-flex;background:#e8f2ff;border-radius:9px;color:#176ce3;width:30px;height:30px;align-items:center;justify-content:center}.brand small{font-size:10px;color:#126ff3}nav{display:grid;gap:7px;margin-top:38px}nav button{border:0;text-align:left;color:#778393;background:transparent;padding:13px 12px;border-radius:9px;cursor:pointer}nav button.active{color:#186ee6;background:#eaf3ff;font-weight:650}footer{margin-top:auto;color:#9da5b0;font-size:12px}main{flex:1;padding:44px;max-width:1160px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:26px}label{color:#8691a1;font-size:12px;letter-spacing:.5px}h1{font-size:30px;margin:6px 0}p{color:#8591a2;line-height:1.65}.primary{background:#126ff3;color:white;border:0;border-radius:9px;padding:10px 16px;cursor:pointer}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}section{border:1px solid #e9edf2;border-radius:14px;background:#fff;padding:24px}h2{font-size:22px;margin:12px 0 5px}.details{margin-top:16px}.details pre,pre{background:#f6f8fa;border-radius:9px;padding:16px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}h3{margin-top:0}.error{color:#d33}.fact{display:flex;justify-content:space-between;border-top:1px solid #edf0f4;padding:13px 0;gap:20px}.fact>span:first-child{color:#738093}.notice{background:#fffaf0;padding:13px;border-radius:10px;color:#79623c}.footnote{font-size:12px}@media(max-width:800px){aside{width:170px;padding:18px 10px}main{padding:24px 15px}.cards{grid-template-columns:1fr}}@media(max-width:480px){.layout{display:block}aside{width:100%;padding:14px}.brand{font-size:18px}nav{display:flex;gap:4px;margin-top:13px}nav button{padding:9px 8px;font-size:12px}footer{display:none}main{padding:20px 12px}h1{font-size:24px}}
+:global(*){box-sizing:border-box}:global(body){margin:0;background:#f6f8fa;color:#233447;font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.layout{display:flex;min-height:100vh}aside{width:236px;flex-shrink:0;background:#fff;border-right:1px solid #e5eaef;padding:26px 18px;display:flex;flex-direction:column}.brand{font-size:20px;font-weight:750;white-space:nowrap}.logo{background:#eaf2fe;color:#2468d9;border-radius:10px;padding:6px 10px;margin-right:5px}.brand small{color:#3673d8;font-size:10px}nav{display:grid;gap:5px;margin-top:40px}nav button{background:transparent;text-align:left;padding:13px;border:0;border-radius:9px;color:#6b7787;cursor:pointer}nav button.active{background:#eaf2ff;color:#2269df;font-weight:700}footer{margin-top:auto;color:#9aa4b0;font-size:12px}main{width:100%;max-width:1120px;padding:38px 44px}header{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-bottom:22px}label{display:block;color:#8591a0;font-size:12px;margin-bottom:7px}h1{margin:4px 0;font-size:28px}p{color:#788698;line-height:1.65;margin:7px 0 15px}h3{margin:0;font-size:17px}h4{margin-top:22px;margin-bottom:10px}section{background:#fff;border:1px solid #e7ebef;border-radius:14px;padding:24px;margin-bottom:16px}.section-title{display:flex;justify-content:space-between;align-items:center}.mode{border:1px solid #e5ecf9;background:#f6f9fe;border-radius:11px;padding:14px 16px;margin-top:14px}.mode p{margin:6px 0 0}.toggle{position:relative;display:inline-flex;cursor:pointer}.toggle input{width:44px;height:24px;accent-color:#2672e6;cursor:pointer}.formrow{display:flex;align-items:end;gap:12px;margin-top:20px}.grow{flex:1;min-width:0}input:not([type=checkbox]),select{border:1px solid #d9e1ea;border-radius:9px;background:#fff;color:#243447;padding:10px 11px;width:100%;font:inherit;min-height:42px}.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:17px}.wide{grid-column:span 2}button{font:inherit;cursor:pointer}.primary{background:#1f6bde;border:0;color:white;border-radius:9px;padding:11px 17px;white-space:nowrap}.secondary{background:#fff;border:1px solid #dce3eb;color:#3d4b5c;border-radius:9px;padding:10px 15px}.delete{border:0;color:#b65050;background:#fff5f4;border-radius:8px;padding:9px 12px}.account,.binding{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #edf0f4;padding:14px 0}.account small{display:block;color:#8490a0;margin-top:5px;overflow-wrap:anywhere}.binding{justify-content:flex-start}.binding code{overflow-wrap:anywhere}.binding b{margin-left:auto}.detail{align-self:center;white-space:nowrap;color:#6d7784}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.cards section{min-height:115px}h2{margin:10px 0}.error{color:#b42e2e;background:#fff0ee;border-radius:9px;padding:12px}.notice.success{background:#edf8f1;color:#227e49;padding:12px;border-radius:9px}pre{background:#f5f7fa;padding:15px;border-radius:10px;overflow-wrap:anywhere;white-space:pre-wrap}.empty{padding:15px;color:#9ba5b3;text-align:center}.footnote{font-size:12px;color:#9aa4b2}button:disabled{opacity:.5;cursor:not-allowed}@media(max-width:800px){aside{width:185px;padding:16px 10px}main{padding:24px 16px}.cards{grid-template-columns:1fr}}@media(max-width:580px){.layout{display:block}aside{width:100%;border-bottom:1px solid #e5eaef}.brand{font-size:18px}nav{display:flex;margin-top:18px;overflow-x:auto}nav button{white-space:nowrap;padding:8px}footer{display:none}main{padding:20px 12px}header{align-items:flex-start}.formrow{display:grid}.formgrid{grid-template-columns:1fr}.wide{grid-column:span 1}section{padding:16px}.cards{grid-template-columns:1fr}}
 </style>
