@@ -5,6 +5,7 @@ package accounts
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -30,9 +31,10 @@ var (
 )
 
 type Account struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	BridgeURL string `json:"bridge_url"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	BridgeURL  string `json:"bridge_url"`
+	CacheToken string `json:"cache_token,omitempty"`
 }
 type Config struct {
 	Isolation     bool              `json:"isolation"`
@@ -63,7 +65,12 @@ func New(path string, build Builder) (*Manager, error) {
 		return nil, fmt.Errorf("%w: state path required", ErrInvalid)
 	}
 	if build == nil {
-		build = func(u string) (provider.Adapter, error) { return netease.NewBridge(u) }
+		build = func(u string) (provider.Adapter, error) {
+			if strings.HasPrefix(u, "native://") {
+				return netease.NewNative(u, filepath.Dir(path))
+			}
+			return netease.NewBridge(u)
+		}
 	}
 	m := &Manager{path: path, build: build, config: defaultConfig(), adapters: map[string]provider.Adapter{}}
 	if err := m.load(); err != nil {
@@ -123,7 +130,7 @@ func (m *Manager) validate(c Config) (map[string]provider.Adapter, error) {
 	adapters := make(map[string]provider.Adapter, len(c.Accounts))
 	seenURL := map[string]bool{}
 	for _, a := range c.Accounts {
-		if !idPattern.MatchString(a.ID) || strings.TrimSpace(a.Name) == "" || len(a.Name) > 80 {
+		if !idPattern.MatchString(a.ID) || strings.TrimSpace(a.Name) == "" || len(a.Name) > 80 || (a.CacheToken != "" && (len(a.CacheToken) != 32 || !isHex(a.CacheToken))) {
 			return nil, fmt.Errorf("%w: account ID or name", ErrInvalid)
 		}
 		if _, exists := adapters[a.ID]; exists {
@@ -142,6 +149,9 @@ func (m *Manager) validate(c Config) (map[string]provider.Adapter, error) {
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%w: account %s: %v", ErrInvalid, a.ID, err)
+		}
+		if strings.HasPrefix(a.BridgeURL, "native://") && a.BridgeURL != "native://netease/"+a.ID {
+			return nil, fmt.Errorf("%w: native URL account ID must match configured ID", ErrInvalid)
 		}
 		if seenURL[strings.ToLower(a.BridgeURL)] {
 			return nil, fmt.Errorf("%w: separate accounts need separate MusicBox instances", ErrConflict)
@@ -213,7 +223,7 @@ func (m *Manager) ResolveScoped(fnOSGUID string) (provider.Adapter, string, bool
 	}
 	for _, row := range m.config.Accounts {
 		if row.ID == id {
-			sum := sha256.Sum256([]byte(row.BridgeURL))
+			sum := sha256.Sum256([]byte(row.BridgeURL + ":" + row.CacheToken))
 			return a, id + ":" + hex.EncodeToString(sum[:8]), true
 		}
 	}
@@ -284,10 +294,25 @@ func (m *Manager) persist(c Config) error {
 	return nil
 }
 func (m *Manager) Add(a Account) error {
+	// A new generation must never inherit cached metadata from an account
+	// deleted earlier with the same display ID and provider URL.
+	key := make([]byte, 16)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	a.CacheToken = hex.EncodeToString(key)
 	return m.update(func(c *Config) error { c.Accounts = append(c.Accounts, a); return nil })
 }
+func isHex(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
 func (m *Manager) Remove(id string) error {
-	return m.update(func(c *Config) error {
+	err := m.update(func(c *Config) error {
 		found := false
 		out := make([]Account, 0, len(c.Accounts))
 		for _, a := range c.Accounts {
@@ -311,6 +336,12 @@ func (m *Manager) Remove(id string) error {
 		}
 		return nil
 	})
+	// Sessions are private to a native account ID. Revocation deletes the token;
+	// even re-adding the same account ID must not silently resurrect a login.
+	if err == nil {
+		_ = os.Remove(filepath.Join(filepath.Dir(m.path), "netease-sessions", id+".json"))
+	}
+	return err
 }
 func (m *Manager) SetIsolation(on bool) error {
 	return m.update(func(c *Config) error { c.Isolation = on; return nil })
