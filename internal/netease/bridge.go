@@ -47,7 +47,7 @@ func NewBridge(address string) (*Bridge, error) {
 	if u.Port() == "" {
 		return nil, errors.New("MusicBox bridge port required")
 	}
-	return &Bridge{base: u, client: &http.Client{Timeout: 12 * time.Second}, media: newMediaClient()}, nil
+	return &Bridge{base: u, client: &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, media: newMediaClient()}, nil
 }
 func (b *Bridge) ID() string { return "netease" }
 func (b *Bridge) url(path string, q url.Values) string {
@@ -248,9 +248,6 @@ func (b *Bridge) Play(ctx context.Context, user provider.User, req provider.Play
 		ct = "audio/mpeg"
 	}
 	return provider.Stream{Body: resp.Body, StatusCode: resp.StatusCode, ContentType: ct, ContentRange: resp.Header.Get("Content-Range"), ContentLength: resp.ContentLength}, nil
-}
-func (b *Bridge) ListPlaylists(ctx context.Context, user provider.User) ([]provider.Playlist, error) {
-	return nil, ErrUnsupported
 }
 func validID(id string) bool {
 	if id == "" || len(id) > 20 {
