@@ -15,7 +15,8 @@ $('bindings').replaceChildren();for(const [user,id] of Object.entries(c.bindings
 $('refresh').onclick=refresh;
 $('isolation').onchange=e=>write('PUT','/accounts/mode',{isolation:e.target.checked});
 $('shared').onchange=e=>write('PUT','/accounts/shared',{account_id:e.target.value});
-$('add').onclick=()=>write('POST','/accounts',{id:$('account-id').value.trim(),name:$('account-name').value.trim(),bridge_url:$('account-url').value.trim()});
+$('provider-mode').onchange=()=>{$('musicbox-field').hidden=$('provider-mode').value!=='musicbox';};
+$('add').onclick=()=>{const id=$('account-id').value.trim();const url=$('provider-mode').value==='native'?'native://netease/'+id:$('account-url').value.trim();write('POST','/accounts',{id,name:$('account-name').value.trim(),bridge_url:url});};
 $('bind').onclick=()=>write('PUT','/accounts/bindings/'+encodeURIComponent($('user-guid').value.trim()),{account_id:$('bind-account').value});
 refresh();
 
