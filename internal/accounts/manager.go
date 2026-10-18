@@ -340,3 +340,17 @@ func (m *Manager) Probe(ctx context.Context, id string) error {
 	}
 	return a.Health(ctx)
 }
+
+// LookupAccount is for trusted administrator requests only. It never exposes
+// provider cookies, and binds the adapter to its current local service address.
+func (m *Manager) LookupAccount(id string) (provider.Adapter, string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, a := range m.config.Accounts {
+		if a.ID == id {
+			adapter := m.adapters[id]
+			return adapter, a.BridgeURL, adapter != nil
+		}
+	}
+	return nil, "", false
+}
