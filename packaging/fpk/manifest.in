@@ -1,7 +1,7 @@
 appname               = fnmusic-go
 version               = @VERSION@
 display_name          = fnMusic Go 原生扩展
-desc                  = Go + Vue 3 飞牛音乐扩展：可恢复 Socket 代理、网易云 MusicBox 桥接、可选飞牛用户隔离及共享账号管理。
+desc                  = Go + Vue 3 飞牛音乐扩展：可恢复 Socket 代理、网易云 MusicBox 桥接扫码、自建歌单只读展示、可选飞牛用户隔离及共享账号管理。
 platform              = all
 source                = thirdparty
 maintainer            = chenpingonline
