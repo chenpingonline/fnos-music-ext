@@ -18,6 +18,31 @@ import (
 
 const maxOfficialSearchBody = 6 << 20
 
+// AccountResolver is implemented by the persistent accounts.Manager. A verified
+// fnOS identity is ALWAYS required, regardless of the configured isolation mode.
+type AccountResolver interface {
+	Resolve(fnOSGUID string) (provider.Adapter, string, bool)
+	IsConfigured() bool
+}
+
+func (g *Gateway) SetAccounts(manager AccountResolver) { g.accounts = manager }
+func (g *Gateway) sourceFor(user provider.User) (provider.Adapter, string, bool) {
+	if user.Validate() != nil {
+		return nil, "", false
+	}
+	if g.accounts != nil {
+		a, id, ok := g.accounts.Resolve(user.FnOSGUID)
+		if namespace, yes := g.accounts.(interface{ CacheNamespace(string) string }); yes {
+			id = namespace.CacheNamespace(id)
+		}
+		return a, id, ok
+	}
+	if g.online != nil && user.FnOSGUID == g.ownerGUID {
+		return g.online, "legacy", true
+	}
+	return nil, "", false
+}
+
 func (g *Gateway) SetOnline(source provider.Adapter, ownerGUID string) {
 	if source == nil || strings.TrimSpace(ownerGUID) == "" || ownerGUID == "shared" {
 		return
@@ -36,7 +61,7 @@ type trackCache struct {
 }
 
 func newTrackCache() *trackCache { return &trackCache{entries: make(map[string]cachedTrack)} }
-func (c *trackCache) put(t provider.Track) {
+func (c *trackCache) put(key string, t provider.Track) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.entries) > 500 {
@@ -47,7 +72,7 @@ func (c *trackCache) put(t provider.Track) {
 			}
 		}
 	}
-	c.entries[t.ID] = cachedTrack{t, time.Now().Add(20 * time.Minute)}
+	c.entries[key] = cachedTrack{t, time.Now().Add(20 * time.Minute)}
 }
 func (c *trackCache) get(id string) (provider.Track, bool) {
 	c.mu.Lock()
@@ -86,7 +111,7 @@ func (g *Gateway) identify(ctx context.Context, r *http.Request) (provider.User,
 			GUID string `json:"guid"`
 		} `json:"data"`
 	}
-	if json.NewDecoder(io.LimitReader(resp.Body, 32<<10)).Decode(&data) != nil || data.Code != 0 || data.Data.GUID != g.ownerGUID {
+	if json.NewDecoder(io.LimitReader(resp.Body, 32<<10)).Decode(&data) != nil || data.Code != 0 {
 		return provider.User{}, false
 	}
 	user := provider.User{FnOSGUID: data.Data.GUID, Verified: true}
@@ -128,7 +153,11 @@ func (g *Gateway) serveOnline(w http.ResponseWriter, r *http.Request) bool {
 		if !ok {
 			return false
 		}
-		return g.search(w, r, user, kw)
+		source, accountID, allowed := g.sourceFor(user)
+		if !allowed {
+			return false
+		}
+		return g.search(w, r, user, source, accountID, kw)
 	case (path == "/music/api/v1/track/stream" || strings.HasPrefix(path, "/music/api/v1/track/stream/")) && (r.Method == http.MethodGet || r.Method == http.MethodHead):
 		return g.onlineSong(w, r, "stream")
 	case (path == "/music/api/v1/track/metadata" || strings.HasPrefix(path, "/music/api/v1/track/metadata/") || path == "/music/api/v1/track/audio-info") && r.Method == http.MethodGet:
@@ -143,7 +172,7 @@ func (g *Gateway) serveOnline(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.User, keyword string) bool {
+func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.User, source provider.Adapter, accountID string, keyword string) bool {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
@@ -231,7 +260,7 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 			fetchLimit = 1
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		result, e := g.online.Search(ctx, user, provider.SearchRequest{Keyword: keyword, Offset: onlineStart, Limit: fetchLimit})
+		result, e := source.Search(ctx, user, provider.SearchRequest{Keyword: keyword, Offset: onlineStart, Limit: fetchLimit})
 		cancel()
 		if e != nil {
 			log.Printf("fnmusic-go: music source search unavailable: %T", e)
@@ -269,7 +298,7 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 				continue
 			}
 			items = append(items, raw)
-			g.cache.put(t)
+			g.cache.put(accountID+":"+t.ID, t)
 		}
 	}
 	if len(items) == 0 && start < localTotal { // Still publish online total to enable subsequent pages.
@@ -308,13 +337,13 @@ func writeOfficial(w http.ResponseWriter, resp *http.Response, b []byte) {
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(b)
 }
-func (g *Gateway) getTrack(ctx context.Context, user provider.User, id string) (provider.Track, error) {
-	if t, ok := g.cache.get(id); ok {
+func (g *Gateway) getTrack(ctx context.Context, user provider.User, source provider.Adapter, accountID, id string) (provider.Track, error) {
+	if t, ok := g.cache.get(accountID + ":" + id); ok {
 		return t, nil
 	}
-	t, e := g.online.GetTrack(ctx, user, id)
+	t, e := source.GetTrack(ctx, user, id)
 	if e == nil {
-		g.cache.put(t)
+		g.cache.put(accountID+":"+id, t)
 	}
 	return t, e
 }
@@ -325,14 +354,19 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 	}
 	user, authed := g.identify(r.Context(), r)
 	if !authed {
-		http.Error(w, "fnOS account is not permitted to access this source", http.StatusForbidden)
+		http.Error(w, "verified fnOS account required", http.StatusForbidden)
+		return true
+	}
+	source, accountID, allowed := g.sourceFor(user)
+	if !allowed {
+		http.Error(w, "no music account selected for this fnOS user", http.StatusForbidden)
 		return true
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 	switch action {
 	case "metadata":
-		track, e := g.getTrack(ctx, user, id)
+		track, e := g.getTrack(ctx, user, source, accountID, id)
 		if e != nil {
 			http.Error(w, "online metadata unavailable", http.StatusBadGateway)
 			return true
@@ -344,7 +378,7 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 		}
 		writeJSON(w, 200, payload)
 	case "lyrics", "lyric-list":
-		lyric, e := g.online.GetLyrics(ctx, user, id)
+		lyric, e := source.GetLyrics(ctx, user, id)
 		if e != nil {
 			http.Error(w, "lyrics unavailable", http.StatusBadGateway)
 			return true
@@ -357,7 +391,7 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 		}
 		// Audio must use request context rather than a 12s timeout; playback continues
 		// while the client is connected and is cancelled on disconnect.
-		stream, e := g.online.Play(r.Context(), user, provider.PlaybackRequest{TrackID: id, Quality: "exhigh", Range: rangeVal})
+		stream, e := source.Play(r.Context(), user, provider.PlaybackRequest{TrackID: id, Quality: "exhigh", Range: rangeVal})
 		if e != nil {
 			http.Error(w, "online audio unavailable or not entitled", http.StatusBadGateway)
 			return true
@@ -378,7 +412,7 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 			_, _ = io.Copy(w, stream.Body)
 		}
 	case "cover":
-		imgSource, ok := g.online.(interface {
+		imgSource, ok := source.(interface {
 			OpenCover(context.Context, provider.User, string) (provider.Stream, error)
 		})
 		if !ok {
@@ -403,7 +437,12 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 }
 
 // for tests and for diagnostic status.
-func (g *Gateway) OnlineEnabled() bool  { return g.online != nil && g.ownerGUID != "" }
+func (g *Gateway) OnlineEnabled() bool {
+	if g.accounts != nil {
+		return g.accounts.IsConfigured()
+	}
+	return g.online != nil && g.ownerGUID != ""
+}
 func (g *Gateway) CurrentOwner() string { return g.ownerGUID }
 func (g *Gateway) SearchURL(query string) string {
 	return (&url.URL{Path: "/music/api/v1/search/track", RawQuery: url.Values{"q": {query}}.Encode()}).String()
