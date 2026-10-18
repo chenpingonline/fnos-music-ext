@@ -1,0 +1,14 @@
+appname               = fnmusic-go
+version               = @VERSION@
+display_name          = fnMusic Go 原生扩展
+desc                  = Go + Vue 3 飞牛音乐无侵入扩展；v0.1.0 仅安全代理、恢复与诊断，不含在线音源。
+platform              = all
+source                = thirdparty
+maintainer            = chenpingonline
+maintainer_url        = https://github.com/chenpingonline
+os_min_version        = 1.2.0
+install_dep_apps      = trim.music
+desktop_uidir         = ui
+desktop_applaunchname = fnmusic-go.main
+checkport             = false
+micro_app             = true

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${SELF_DIR}/_common"
+systemctl stop "${UNIT}" || true
+[ ! -f /run/fnmusic-go/ownership.json ] || { echo '停止失败：官方音乐 Socket 未恢复，拒绝升级' >&2; exit 1; }

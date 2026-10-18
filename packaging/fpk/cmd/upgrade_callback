@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${SELF_DIR}/_common"
+[ -x "${BINARY}" ] || { echo "missing runtime ${BINARY}" >&2; exit 1; }
+if [ -f "${SERVICE_FILE}" ]; then
+  # Update must not silently inherit a unit pointing at another installation.
+  grep -Fqx "WorkingDirectory=${PAYLOAD}" "${SERVICE_FILE}" || { echo 'unit deployment ownership mismatch' >&2; exit 1; }
+else
+  echo 'missing service unit, install a fresh package' >&2; exit 1
+fi
+systemctl daemon-reload
+systemctl enable --now "${UNIT}"

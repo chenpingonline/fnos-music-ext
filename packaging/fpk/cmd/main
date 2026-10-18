@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${SELF_DIR}/_common"
+case "${1:-}" in
+  start) systemctl start "${UNIT}" ;;
+  stop)
+    systemctl stop "${UNIT}"
+    [ ! -f /run/fnmusic-go/ownership.json ] || { echo '官方 Socket 恢复未验证；已保留状态供排查' >&2; exit 1; }
+    ;;
+  status) service_state && exit 0 || exit 3 ;;
+  *) echo 'usage: main start|stop|status' >&2; exit 1 ;;
+esac

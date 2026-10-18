@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# All system configuration removed in uninstall_init, after a verified restoration.
+exit 0

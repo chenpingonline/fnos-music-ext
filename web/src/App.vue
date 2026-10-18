@@ -1,0 +1,15 @@
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'
+type State={version:string;phase:string;source_enabled:boolean;socket:{journal:boolean;target_state:unknown;upstream_state:unknown};checked_at:string}
+const state=ref<State|null>(null)
+const error=ref('')
+const loading=ref(false)
+async function refresh(){loading.value=true;error.value='';try{const r=await fetch('/app/fnmusic-go/api/status',{credentials:'same-origin',cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);state.value=await r.json()}catch(e){error.value=String(e)}finally{loading.value=false}}
+onMounted(refresh)
+</script>
+<template>
+<div class="layout"><aside><div class="brand">♫ &nbsp;fnMusic <small>GO</small></div><nav><b>◉ &nbsp;运行概览</b><span>♫ &nbsp;网易云音乐 · 待开发</span><span>⚙ &nbsp;配置管理 · 待开发</span></nav><footer>v0.1.0 · 安全透传原型</footer></aside><main><header><div><label>FNOS MUSIC EXTENSION</label><h1>运行概览</h1><p>官方飞牛音乐原生扩展 · Go + Vue 3</p></div><button @click="refresh" :disabled="loading">刷新状态</button></header><div class="cards"><section><label>代理接管</label><h2>{{state?.socket.journal?'已接管':'未连接'}}</h2><p>Socket 所有权校验</p></section><section><label>网易云音源</label><h2>尚未启用</h2><p>下一阶段接入</p></section><section><label>版本</label><h2>{{state?.version||'—'}}</h2><p>不依赖 Python 和 Docker</p></section></div><section class="details"><h3>诊断信息</h3><p v-if="error" class="error">{{error}}</p><pre v-else>{{JSON.stringify(state,null,2)}}</pre></section><p class="footnote">首版只提供只读诊断。官方音乐的数据和音频请求保持透明转发。</p></main></div>
+</template>
+<style scoped>
+:global(*){box-sizing:border-box}:global(body){margin:0;background:#f7f9fb;color:#203145;font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.layout{display:flex;min-height:100vh}aside{background:white;width:230px;border-right:1px solid #e9eef3;padding:28px 19px;display:flex;flex-direction:column}.brand{font-size:20px;font-weight:750}.brand small{font-size:10px;color:#126ff3}nav{display:grid;gap:7px;margin-top:38px;color:#8b96a7}nav>*{padding:13px 12px;border-radius:9px}nav b{color:#186ee6;background:#eaf3ff}footer{margin-top:auto;color:#9da5b0;font-size:12px}main{flex:1;padding:44px;max-width:1160px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:26px}label{color:#8691a1;font-size:12px;letter-spacing:.5px}h1{font-size:30px;margin:6px 0}p{color:#8591a2}button{background:#126ff3;color:white;border:0;border-radius:9px;padding:10px 16px;cursor:pointer}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}section{border:1px solid #e9edf2;border-radius:14px;background:#fff;padding:24px}h2{font-size:22px;margin:12px 0 5px}.details{margin-top:16px}.details pre{background:#f6f8fa;border-radius:9px;padding:16px;white-space:pre-wrap;overflow-wrap:anywhere}h3{margin-top:0}.error{color:#d33}.footnote{font-size:12px}@media(max-width:800px){aside{width:58px;padding:16px 8px}.brand{font-size:0}nav>*{font-size:0}nav b{font-size:0}footer{display:none}main{padding:24px 15px}.cards{grid-template-columns:1fr}}
+</style>

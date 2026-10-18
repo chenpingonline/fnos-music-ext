@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${SELF_DIR}/_common"
+systemctl stop "${UNIT}" || true
+if [ -f /run/fnmusic-go/ownership.json ]; then
+  "${BINARY}" restore || { echo '无法验证原生 Socket 恢复；中止卸载防止破坏官方音乐' >&2; exit 1; }
+fi
+if [ -f "${SERVICE_FILE}" ]; then
+  grep -Fqx "WorkingDirectory=${PAYLOAD}" "${SERVICE_FILE}" || { echo 'unit 不属于当前安装目录，拒绝删除' >&2; exit 1; }
+  systemctl disable "${UNIT}" || true
+  rm -f "${SERVICE_FILE}"
+  systemctl daemon-reload
+fi

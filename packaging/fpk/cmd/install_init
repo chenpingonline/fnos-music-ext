@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${SELF_DIR}/_common"
+[ -S /var/run/trim_music.socket ] || { echo '请先安装并启动官方飞牛音乐' >&2; exit 1; }
+[ -S /var/run/trim_music_upstream.socket ] && { echo '检测到已有 Socket 接管。请先退出其他音乐扩展。' >&2; exit 1; }
+echo 'fnMusic Go 前置检查通过（不需要 Docker/Python）'

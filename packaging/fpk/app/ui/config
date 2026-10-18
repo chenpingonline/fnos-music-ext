@@ -1,0 +1,16 @@
+{
+  ".url": {
+    "fnmusic-go.main": {
+      "title": "fnMusic Go 管理",
+      "desc": "系统状态与诊断（v0.1）",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "http",
+      "port": "",
+      "url": "/app/fnmusic-go/",
+      "allUsers": false,
+      "gatewaySocket": "fnmusic-go.sock",
+      "gatewayPrefix": "/app/fnmusic-go"
+    }
+  }
+}
