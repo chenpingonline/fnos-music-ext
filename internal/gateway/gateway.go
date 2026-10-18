@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -13,9 +14,12 @@ import (
 
 // Gateway preserves official API semantics. No third-party music or writes are enabled in v0.1.
 type Gateway struct {
-	upstream string
-	proxy    *httputil.ReverseProxy
-	client   *http.Client
+	upstream  string
+	proxy     *httputil.ReverseProxy
+	client    *http.Client
+	online    provider.Adapter
+	ownerGUID string
+	cache     *trackCache
 }
 
 func New(upstream string) *Gateway {
@@ -33,12 +37,12 @@ func New(upstream string) *Gateway {
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		http.Error(w, "official music backend unavailable", http.StatusBadGateway)
 	}
-	return &Gateway{upstream: upstream, proxy: rp, client: &http.Client{Transport: transport, Timeout: 3 * time.Second}}
+	return &Gateway{upstream: upstream, proxy: rp, client: &http.Client{Transport: transport, Timeout: 3 * time.Second}, cache: newTrackCache()}
 }
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/_ext/livez":
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "fnmusic-go", "version": "0.1.0"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "fnmusic-go", "version": "0.2.0-preview"})
 		return
 	case "/_ext/healthz":
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://trim-music/music/api/v1/user/me", nil)
@@ -60,7 +64,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]any{"ok": ok, "upstream": "reachable", "upstream_http_status": resp.StatusCode})
 		return
 	}
-	// This path is for the official music API only. Admin routes live on a separate socket.
+	// Online interception is opt-in and bound to one verified fnOS account.
+	if g.online != nil && g.ownerGUID != "" && g.serveOnline(w, r) {
+		return
+	}
+	// Official music API fallback is unchanged on any provider failure.
 	g.proxy.ServeHTTP(w, r)
 }
 func writeJSON(w http.ResponseWriter, status int, v any) {

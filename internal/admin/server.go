@@ -15,8 +15,10 @@ import (
 var embedded embed.FS
 
 type Config struct {
-	Socket takeover.Config
-	Prefix string
+	Socket            takeover.Config
+	Prefix            string
+	NeteaseConfigured bool
+	NeteaseOwner      string
 }
 
 func New(c Config) http.Handler {
@@ -38,7 +40,7 @@ func New(c Config) http.Handler {
 			switch r.URL.Path {
 			case "/api/status":
 				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				_ = json.NewEncoder(w).Encode(map[string]any{"version": "0.1.0", "phase": "safe-transparent-proxy", "source_enabled": false, "features": []string{"unix-socket-proxy", "health", "read-only-dashboard", "safe-restore"}, "socket": takeover.Inspect(c.Socket), "checked_at": time.Now().UTC().Format(time.RFC3339)})
+				_ = json.NewEncoder(w).Encode(map[string]any{"version": "0.2.0-preview", "phase": "netease-bridge-preview", "source_enabled": c.NeteaseConfigured, "netease_mode": "single-owner-musicbox-bridge", "netease_owner": c.NeteaseOwner, "features": []string{"unix-socket-proxy", "health", "read-only-dashboard", "safe-restore"}, "socket": takeover.Inspect(c.Socket), "checked_at": time.Now().UTC().Format(time.RFC3339)})
 			default:
 				http.NotFound(w, r)
 			}

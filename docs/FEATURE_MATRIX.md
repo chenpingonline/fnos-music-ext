@@ -15,20 +15,20 @@
 | SYS-04 | 原子接管与回退 | Linux `renameat2(RENAME_NOREPLACE)`、预启动、退出恢复 | 已编码 + 测试；意外崩溃需 `restore`，不保证自动 | v0.1 实机 |
 | SYS-05 | 健康探测和日志 | `/ _ext/healthz`（实际无空格）、`fnlog` | 已编码：健康和状态 JSON；日志轮换待迁移 | v0.1 / v0.4 |
 | SYS-06 | 管理员网关 | `/app/fnmusic-ext`、`gatewaySocket`、飞牛管理员注入头 | 已编码：单独管理 UDS + 对端 UID 检查、只读接口 | v0.1 实机 |
-| SEARCH-01 | 本地+在线同搜 | 官方搜曲响应包裹合并；`proxy/app.py:search_track` | 本地原生搜索完全透传；在线合并待迁移 | v0.2 |
-| SEARCH-02 | 在线结果来源标记 | 给官方 Track VO 注入虚拟 GUID / source | 待迁移 | v0.2 |
+| SEARCH-01 | 本地+在线同搜 | 官方搜曲响应包裹合并；`proxy/app.py:search_track` | v0.2：MusicBox 过渡桥接下基本合并已实现（模拟服务测试） | v0.2 |
+| SEARCH-02 | 在线结果来源标记 | 给官方 Track VO 注入虚拟 GUID / source | v0.2：虚拟 GUID / 来源标记已实现 | v0.2 |
 | SEARCH-03 | 防抖、超时、缓存 | `_wait_search_debounce`、搜索会话缓存 | 待迁移 | v0.2 |
 | SEARCH-04 | 深分页与本地优先 | `docs/SEARCH_PAGINATION.md` 虚拟列表窗口及在线池 | 待迁移，需协议契约测试 | v0.2 |
-| SOURCE-01 | 网易云查询/详情 | `musicbox-service/app.py` 封装 NEMbox CLI | Provider 接口骨架；音源未接入 | v0.2 |
+| SOURCE-01 | 网易云查询/详情 | `musicbox-service/app.py` 封装 NEMbox CLI | v0.2：Go MusicBox HTTP 桥接，非纯 Go 网易协议实现 | v0.2 |
 | SOURCE-02 | 网易云扫码和账户 | musicbox QR + cookie jar（实例共享） | 待迁移，并改为用户级隔离 | v0.3 |
 | SOURCE-03 | 网易云音频链接/品质 | `musicbox-service/playback.py` EAPI + 授权检测 | 待迁移；须核实使用许可 | v0.2 |
 | SOURCE-04 | musicdl 聚合搜索 | `musicdl-service` + Python `musicdl/curl_cffi` | 待迁移，初期非重点 | v0.4 |
 | SOURCE-05 | 洛雪多源 | `lxmusic-service`、Node.js lxserver、用户 JS | 待迁移，要求脚本风险隔离 | v0.4 |
-| STREAM-01 | 音频流 GET/HEAD/Range | `proxy/app.py:stream_track`、`serve_file_with_range` | **本地官方请求透明透传**测试通过；在线转发待实现 | v0.1 / v0.2 |
+| STREAM-01 | 音频流 GET/HEAD/Range | `proxy/app.py:stream_track`、`serve_file_with_range` | v0.2：原生透传 + 在线 GET/HEAD/Range 模拟测试已通过 | v0.1 / v0.2 |
 | STREAM-02 | 取流超时/重试/断点 | `_open_online_stream`、失败备选、URL pin | 待迁移 | v0.2 |
 | STREAM-03 | 在线 HLS/AAC 转码 | `proxy/transcode.py` FFmpeg fMP4 | 待迁移；保持 ffmpeg 外部进程 | v0.3 |
 | STREAM-04 | 播放和下载音质独立 | `FNMUSIC_QUALITY_MODE` / `FNMUSIC_DL_QUALITY` | 待迁移 | v0.3 |
-| META-01 | 歌词、封面、元数据 | /lyric、/metadata、/static/cover 拦截及 CDN 缓存 | 待迁移 | v0.2 |
+| META-01 | 歌词、封面、元数据 | /lyric、/metadata、/static/cover 拦截及 CDN 缓存 | v0.2：元数据、歌词、封面适配已编码，未实机 | v0.2 |
 | LIST-01 | 网易自建歌单 | `proxy/nmplaylists.py`：只读虚拟歌单 | 待迁移 | v0.3 |
 | LIST-02 | 公共推荐/榜单 | `proxy/publicplaylists.py`，可选择注入 | 待迁移 | v0.3 |
 | LIST-03 | 网易歌单常驻 | 非当前主音源时额外运行 musicbox | 待迁移 | v0.4 |
@@ -60,3 +60,7 @@
 - 上游：<https://github.com/javycoder/fnos_music_ext>
 - 主要参考：`proxy/app.py`、`proxy/takeover.py`、`musicbox-service/`、`proxy/transcode.py`、`proxy/nmplaylists.py`、`docs/SEARCH_PAGINATION.md`、`packaging/fpk/`。
 - 上游 MIT，Copyright (c) 2026 fnmusic-ext contributors。若后续实质性复用上游源文件或衍生代码，保留 MIT 通知和版权声明；新项目 `THIRD_PARTY_NOTICES.md` 载明研究来源。
+
+## v0.2 开发预览增量
+
+参见 [V0_2_RELEASE_NOTES.md](V0_2_RELEASE_NOTES.md)。阶段性实现的网易云依赖外部 MusicBox HTTP bridge；生产环境适配和账号独立登录未实现。

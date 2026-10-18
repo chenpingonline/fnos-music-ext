@@ -1,1 +1,10 @@
-async function load(){const pre=document.getElementById('diagnostic');try{const r=await fetch('/app/fnmusic-go/api/status',{credentials:'same-origin',cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const d=await r.json();pre.textContent=JSON.stringify(d,null,2);document.getElementById('proxy').textContent=d.socket?.journal?'已接管':'待连接';document.getElementById('official').textContent=d.socket?.upstream_state?.connected?'已连接':'待确认';}catch(e){pre.textContent='无法读取状态：'+e.message+'。请通过已登录 fnOS 管理员网关访问。';document.getElementById('proxy').textContent='未验证';document.getElementById('official').textContent='未验证';}}document.getElementById('refresh').addEventListener('click',load);load();
+'use strict';
+async function loadStatus(){
+ const el=document.getElementById('diagnostic');el.textContent='正在检测…';
+ try{const r=await fetch('/app/fnmusic-go/api/status',{credentials:'same-origin',cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);
+  const x=await r.json();document.getElementById('socket').textContent=x.socket?.journal?'已接管':'未接管';
+  document.getElementById('source').textContent=x.source_enabled?'已配置':'未配置';
+  document.getElementById('version').textContent=x.version||'—';el.textContent=JSON.stringify(x,null,2)
+ }catch(e){el.textContent='状态获取失败：'+String(e)}
+}
+document.getElementById('refresh').addEventListener('click',loadStatus);loadStatus();

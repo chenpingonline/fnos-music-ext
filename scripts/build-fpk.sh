@@ -10,7 +10,7 @@ cp -a "${ROOT}/packaging/fpk/app/ui/." "${STAGE}/app/ui/"
 cp -a "${ROOT}/packaging/fpk/cmd/." "${STAGE}/cmd/"
 cp -a "${ROOT}/packaging/fpk/config/." "${STAGE}/config/"
 for file in "${STAGE}/cmd/"*; do chmod +x "$file"; done
-sed 's/@VERSION@/0.1.0/' "${ROOT}/packaging/fpk/manifest.in" > "${STAGE}/manifest"
+sed 's/@VERSION@/0.2.0/' "${ROOT}/packaging/fpk/manifest.in" > "${STAGE}/manifest"
 cp "${ROOT}/packaging/fpk/ICON.PNG" "${ROOT}/packaging/fpk/ICON_256.PNG" "${STAGE}/"
 echo "[stage] ${STAGE}"
 if [[ "${1:-}" == "--stage-only" ]]; then exit 0; fi
