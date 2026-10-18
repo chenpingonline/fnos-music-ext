@@ -1,10 +1,10 @@
-# fnMusic Go v0.3.0-preview
+# fnMusic Go v0.4.0-preview
 
 飞牛音乐（`trim.music`）原生扩展的 Go + Vue 3 重构起点。上游功能与实现清单请读 [docs/FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)，架构与安全见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，分阶段任务见 [docs/MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md)。
 
-**当前已编码：** 官方 Unix Socket 透明代理、安全接管/恢复、健康检查、网易云 MusicBox 桥接搜索/播放/歌词/封面（需要单独运行 MusicBox）、可配置飞牛用户隔离/共享账号选择、动态账号绑定、管理 UI、x86_64/ARM64 构建和 FPK staging。
+**当前已编码：** 官方 Unix Socket 透明代理、安全接管/恢复、健康检查、网易云 MusicBox 桥接搜索/播放/歌词/封面（需要单独运行 MusicBox）、可配置飞牛用户隔离/共享账号选择、动态账号绑定、MusicBox 桥接扫码登录、网易云自建歌单只读展示、管理 UI、x86_64/ARM64 构建和 FPK staging。
 
-**当前尚未实现：** Go 原生网易云扫码登录、独立 MusicBox 实例自动启动、musicdl、洛雪、在线收藏/歌单、下载与推荐。音乐播放集成尚未经实际 fnOS 和源站验证，不能视为可直接替换原项目的正式版。
+**当前尚未实现：** 纯 Go 网易云协议与二维码图形生成、独立 MusicBox 实例自动启动、musicdl、洛雪、在线收藏、下载与推荐。音乐播放集成尚未经实际 fnOS 和源站验证，不能视为可直接替换原项目的正式版。
 
 ## 本机开发验证（不需要真正 NAS）
 
@@ -53,6 +53,18 @@ sudo ./dist/linux-amd64/fnmusic-go restore
 
 本阶段新增 **可开关的用户隔离**：默认按飞牛用户 GUID 一对一绑定独立 MusicBox 实例；关闭隔离后，管理员可以在管理页面选择一个共享网易云账号，所有经飞牛身份验证的用户可使用该账号。切回隔离模式保留历史绑定，配置持久化在 `0600` 的 `/var/lib/fnmusic-go/accounts.json`，无需重启。
 
-新增管理界面包括账号添加/删除、共享账号选择、飞牛用户绑定及配置错误提示。所有账号都必须预先运行在各自的本机 MusicBox HTTP 服务中；**当前版本不包含扫码登录实现，不应视为已经具备完全原生的网易云账号能力。** 详情参见 [docs/ACCOUNT_MODES.md](docs/ACCOUNT_MODES.md)。
+新增管理界面包括账号添加/删除、共享账号选择、飞牛用户绑定及配置错误提示。所有账号都必须预先运行在各自的本机 MusicBox HTTP 服务中；**v0.4 可调用 MusicBox 的扫码接口，但并非纯 Go 网易云协议实现。** 详情参见 [docs/ACCOUNT_MODES.md](docs/ACCOUNT_MODES.md)。
 
-运行版本：`v0.3.0-preview`。仍需真实 fnOS 与音乐源授权、兼容验证。
+运行版本：`v0.4.0-preview`。仍需真实 fnOS 与音乐源授权、兼容验证。
+
+## v0.4.0-preview · 登录与歌单
+
+- 在管理员控制台为单个 MusicBox 实例生成网易云扫码挑战、手动检查扫码状态和登录状态。挑战密钥仅保留于 Go 内存 3 分钟，不存入账户文件；扫码二维码包含二维码密钥是扫码协议自身要求。服务端限制轮询频率，管理员管理接口必须经可信 fnOS 管理网关。
+- 支持只读列出当前实例登录的网易云账号**自己创建**的歌单、歌单歌曲（最多 1000 首）；不会把“收藏的其他人歌单”混入列表。
+- 对飞牛官方 `/music/api/v1/playlist/list`、`/playlist/detail`、`/track/playlist-detail/list` 进行只读注入，原始本地歌单照常透传。虚拟歌单 GUID 绑定已选择的实例，切换账户后不再识别前一实例的 GUID。
+- 账号隔离模式和共享账号选择保持 v0.3 行为；媒体文件不自动下载、歌单修改不写入网易端。
+- **依旧需要事先单独启动各账户的 MusicBox HTTP 进程，Python 音源依赖未被移除**。扫码挑战通过原 MusicBox 的 `POST /api/v1/auth/login` 和 `GET /api/v1/auth/login/check` 实现；单独端口的实例必须具有独立 cookie 保存目录。
+- 如果 MusicBox 返回 `qr_ascii`，管理端展示可扫描的字符二维码；否则只展示官方扫码链接，尚未内置 Go QR 图片生成器。
+- 本机测试不等于音乐版权方授权，也不等于实际飞牛手机客户端适配完成；仍无真实 fnOS FPK 实机验收。
+
+详细 API 和边界见 [v0.4 开发说明](docs/V0_4_RELEASE_NOTES.md)。
