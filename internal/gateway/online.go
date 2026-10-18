@@ -137,6 +137,9 @@ func onlineGUID(r *http.Request) (string, string, bool) {
 	return id, strings.TrimPrefix(guid, "track_"), ok
 }
 func (g *Gateway) serveOnline(w http.ResponseWriter, r *http.Request) bool {
+	if g.playlistRoute(w, r) {
+		return true
+	}
 	path := r.URL.Path
 	switch {
 	case strings.HasPrefix(path, "/music/api/v1/search/track") && r.Method == http.MethodGet:
