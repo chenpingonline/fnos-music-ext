@@ -43,7 +43,7 @@ func New(upstream string) *Gateway {
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/_ext/livez":
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "fnmusic-go", "version": "0.4.0-preview"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "fnmusic-go", "version": "0.5.0-preview"})
 		return
 	case "/_ext/healthz":
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "http://trim-music/music/api/v1/user/me", nil)
