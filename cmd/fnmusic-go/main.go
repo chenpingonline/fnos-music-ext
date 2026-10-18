@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chenpingonline/fnmusic-go/internal/admin"
-	"github.com/chenpingonline/fnmusic-go/internal/gateway"
-	"github.com/chenpingonline/fnmusic-go/internal/takeover"
+	"github.com/chenpingonline/fnos-music-ext/internal/admin"
+	"github.com/chenpingonline/fnos-music-ext/internal/gateway"
+	"github.com/chenpingonline/fnos-music-ext/internal/takeover"
 )
 
 func main() {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chenpingonline/fnmusic-go/internal/takeover"
+	"github.com/chenpingonline/fnos-music-ext/internal/takeover"
 )
 
 //go:embed assets/*
