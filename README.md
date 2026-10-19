@@ -1,60 +1,148 @@
 # fnMusic Go
 
-飞牛音乐（`trim.music`）原生扩展的 Go + Vue 3 重构起点。上游功能与实现清单请读 [docs/FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)，架构与安全见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，分阶段任务见 [docs/MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md)。
+为飞牛音乐补充在线搜索、播放、推荐与歌单能力的 Go 原生扩展。
 
-**当前已编码：** 纯 Go 原生网易云 EAPI/WEAPI（搜索、详情、歌词、音频链接、扫码登录、账号私有会话与自建歌单，扫码生成与待扫码查询已做匿名在线验证，其余以假服务测试验证）、官方 Unix Socket 透明代理、安全接管/恢复、健康检查、网易云 MusicBox 桥接搜索/播放/歌词/封面（需要单独运行 MusicBox）、可配置飞牛用户隔离/共享账号选择、动态账号绑定、MusicBox 桥接扫码登录、网易云自建歌单只读展示、管理 UI、x86_64/ARM64 独立 FPK 构建。
+继续使用熟悉的飞牛音乐 Web 端或 App 听歌，通过独立管理面板配置网易云账号、音质、推荐和存储。后端使用 Go，管理界面使用 Vue 3 + TypeScript，支持 x86_64 与 ARM64 NAS。
 
-本轮已增加音质策略、App 下载与转码、搜索深分页、每日/热门推荐、公共歌单选择排序、边听边存、滚动缓存、封面/歌词落盘、目录设置和收藏自动绑定。入口位于管理面板新增的四个页面；实现、默认值与实机验收边界见 [播放与存储功能说明](docs/MUSIC_FEATURES.md)。
+本项目参考 [fnmusic-ext](https://github.com/javycoder/fnos_music_ext) 的功能设计与集成方式重新实现，网易云协议适配参考 [MusicBox](https://github.com/darknessomi/musicbox)。感谢原项目作者与贡献者。
 
-**当前尚未实现：** 独立 MusicBox 实例自动启动、musicdl、洛雪。音乐播放集成尚未经实际 fnOS 和源站验证，不能视为可直接替换原项目的正式版。
+> 当前为开发预览版，真实 fnOS 安装、官方客户端与音源兼容性仍需设备验收。版本以 [`manifest.in`](packaging/fpk/manifest.in) 为准，近期变化见 [v0.5.19 发布说明](docs/V0_5_19_RELEASE_NOTES.md)。
 
-## 本机开发验证（不需要真正 NAS）
+## 主要功能
+
+- **搜索与播放**：本地曲库结果优先，补充网易云在线搜索；支持深分页、歌词、封面、播放音质选择与失败降档。
+- **账号与共享**：网易云扫码登录、独立会话保存；可选择全员共享一个账号，或按飞牛用户分配独立账号。
+- **推荐与歌单**：每日推荐、热门推荐、自建歌单只读展示，以及公共歌单的浏览、选择与排序。
+- **下载与存储**：App 下载、MP3 转码、边听边存、滚动缓存、封面与歌词保存，以及收藏自动落库绑定。
+- **原生集成**：通过可恢复的 Unix Socket 代理适配官方音乐服务，提供接管、恢复与健康检查；管理面板跟随 fnOS 主题。
+
+功能细节和默认设置见[播放与存储说明](docs/MUSIC_FEATURES.md)。目前未接入 musicdl、洛雪音源，也不支持自动启动 MusicBox 实例。
+
+## 运行条件
+
+| 项目 | 要求 |
+| --- | --- |
+| 系统 | fnOS 1.2.0 或更高版本 |
+| 官方应用 | 已安装飞牛音乐（`trim.music`） |
+| 架构 | x86_64 或 ARM64，安装对应架构的 FPK |
+| 运行权限 | 当前按 root 运行，由 fnOS 应用中心管理启停 |
+| FFmpeg | AAC/HLS、MP3 转码与封面嵌入需要设备提供可用 FFmpeg；FPK 不附带 |
+
+支持两种音源接入方式：
+
+- **Go 原生网易云**：直接在管理面板添加账号并扫码登录，无需 Python、MusicBox 或 Docker。
+- **MusicBox 桥接**：连接自行部署的本机 MusicBox HTTP 服务；不同账号需使用独立实例和 Cookie 目录。
+
+## 使用流程
+
+1. 在测试 NAS 上安装对应架构的 FPK，并从应用中心启动扩展。首次使用需验证停用扩展后官方音乐能否恢复。
+2. 打开 fnMusic Go 管理面板，在“音源账号”中添加 Go 原生网易云账号，完成扫码登录并检查登录状态。
+3. 在“访问设置”中选择账号使用方式：关闭隔离并选择共享账号，或开启隔离、搜索飞牛用户名并分配账号。用户分配若显示等待音乐身份确认，需待官方音乐身份匹配后才能生效。
+4. 返回飞牛音乐 Web 端或 App 搜索、播放；需要推荐、公共歌单或自动保存时，再到对应管理页面配置。
+
+管理入口为 `/app/fnmusic-go/`，需通过可信 fnOS 管理网关访问。更多安装、升级、数据迁移与卸载说明见 [fnOS 集成文档](docs/FNOS_INTEGRATION.md)。
+
+## 开发与验证
+
+### 本地验证
+
+Go 测试与 Socket E2E 需在 Linux 环境执行；E2E 使用 `tests/fakeofficial` 模拟官方服务，不接触真实的 `/var/run/trim_music.socket`。
 
 ```bash
-# Go 测试和 E2E 需要 Linux；构建可在 macOS 交叉编译
-GOPROXY=off go test ./...
+go test ./...
 ./scripts/e2e-local.sh
+```
+
+前端验证：
+
+```bash
+cd web
+npm ci
+npm test
+npm run build
+```
+
+前端源码位于 `web/src/`，构建输出到 `internal/admin/assets/`。修改前端后需重新编译 Go，才能更新程序内嵌的管理页面。主题对接官方 `@trimjs/web-app` SDK，宿主不可用时跟随浏览器偏好。
+
+### 构建二进制与 FPK
+
+构建需要 Go、Node.js/npm 和 Python 3，生成 FPK 还需安装官方 `fnpack`。脚本会先通过锁文件安装前端依赖并构建页面，再交叉编译 Linux 二进制，可在 macOS 执行。
+
+```bash
+# 只构建前端和双架构二进制
 ./scripts/build-binaries.sh
+
+# 构建双架构 FPK
+./scripts/build-fpk.sh
+
+# 仅构建指定架构
+./scripts/build-fpk.sh --arch x86
+./scripts/build-fpk.sh --arch arm
+
+# 构建并准备打包目录，不调用 fnpack
 ./scripts/build-fpk.sh --stage-only
 ```
 
-测试 E2E 使用 `tests/fakeofficial` 创建可验证的 Unix Socket HTTP 服务，不接触 `/var/run/trim_music.socket`。
+| 产物 | 路径 |
+| --- | --- |
+| x86_64 二进制 | `dist/linux-amd64/fnmusic-go` |
+| ARM64 二进制 | `dist/linux-arm64/fnmusic-go` |
+| x86_64 安装包 | `dist/fnmusic-go-<版本>-x86.fpk` |
+| ARM64 安装包 | `dist/fnmusic-go-<版本>-arm.fpk` |
+| 打包目录 | `dist/fpk-stage/x86/`、`dist/fpk-stage/arm/` |
 
-## UI
+版本统一读取 `packaging/fpk/manifest.in`，并注入程序、管理页面和产物文件名。生命周期脚本位于 `packaging/fpk/cmd/`；安装和升级准备服务配置，由应用中心调用 `cmd/main` 启停。
 
-- Vue 3 + TypeScript 源码：`web/src/App.vue`；布局与主题位于 `app.css` / `theme.css`，账号登录请求生命周期位于 `useAccountPanel.ts`。
-- 页面包含音源账号、访问设置、运行概览与帮助；支持账号搜索、对话框操作、本地二维码生成及歌单曲目分页。
-- 前端验证：`cd web && npm ci && npm test && npm run build`。
-- 有网络和 npm 环境时：`cd web && npm install && npm run build`。输出到 `internal/admin/assets/`，然后 **重新编译 Go** 以嵌入新的 UI。
-- 当前内嵌的是编译后的 Vue 管理页。构建脚本使用锁文件执行 `npm ci`，先构建前端，再编译 Go；直接 `go build` 使用仓库内已生成的页面。
-- 管理页通过 `/app/fnmusic-go/` 的管理 Socket 提供，主题使用官方 `@trimjs/web-app` SDK；宿主不可用时跟随浏览器偏好。
+### Linux 调试命令
 
-## FPK
-
-`./scripts/build-fpk.sh` 构建前端及两种架构 Go 二进制，分别组装 `dist/fpk-stage/x86/`、`dist/fpk-stage/arm/`，然后调用官方 `fnpack`。产物为 `dist/fnmusic-go-<版本>-x86.fpk` 和 `dist/fnmusic-go-<版本>-arm.fpk`，不再生成 `platform=all` 包。可用 `--arch x86` 或 `--arch arm` 仅构建一种架构；`--stage-only` 仅准备目录。缺少 `fnpack` 时明确失败，不会伪造 `.fpk`。版本唯一来源是 `packaging/fpk/manifest.in` 的 `version`，构建脚本注入 CLI、API、页面和文件名。
-
-FPK 声明了官方应用依赖 `trim.music`；生命周期脚本位于 `packaging/fpk/cmd/`。**未经 fnOS 实机安装验收，请不要在生产 NAS 上直接安装**。本项目按自用部署要求保留 root 运行。安装与升级仅准备服务配置，由应用中心调用 `cmd/main` 启停，不独立注册开机自启动。管理 Socket 自动检查 root 同伴或 nginx 工作进程及其 root 主进程；特殊网关可在实测后使用 `--gateway-uid` 显式指定。数据迁移、升级卸载和验收说明见 [fnOS 集成说明](docs/FNOS_INTEGRATION.md)。
-
-## 命令（仅限 Linux）
+以下以 x86_64 为例，ARM64 使用 `dist/linux-arm64/`。`serve` 会接管官方 Socket，应先在测试 NAS 上验证；日常安装后通过应用中心启停。
 
 ```bash
-# 查看目标 Socket 是否属于官方服务（不修改系统）
+# 检查官方 Socket 状态，不修改系统
 ./dist/linux-amd64/fnmusic-go status
 
-# 运行（触碰官方服务，需要 root；请先在隔离测试 NAS 验证！）
+# 启动服务，需要 root
 sudo ./dist/linux-amd64/fnmusic-go serve --admin-socket /var/apps/fnmusic-go/target/fnmusic-go.sock
 
-# 意外退出而状态仍有 journal 时，人工验证归属再恢复
+# 意外退出且仍有 journal 时，核实归属后手动恢复
 sudo ./dist/linux-amd64/fnmusic-go restore
 ```
 
-`serve` 在退出时自行尝试恢复官方 Socket；`restore` 在未知进程/目标 inode 下会拒绝执行。不要运行两个彼此竞争的飞牛音乐扩展，不要手工删除仍有进程使用的 Socket。
+`serve` 退出时会尝试恢复官方 Socket；`restore` 遇到未知进程或目标 inode 时拒绝操作。不要同时运行多个接管同一 Socket 的扩展，也不要手动删除仍被进程使用的 Socket。特殊网关的 `--gateway-uid` 配置与检查机制见 [fnOS 集成文档](docs/FNOS_INTEGRATION.md)。
 
-## 许可与来源
+## 文档
 
-独立重构实现基于公开的 fnmusic-ext 技术结构进行研究；原项目 MIT 许可不包含平台商业音乐版权/授权。详细见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+| 文档 | 内容 |
+| --- | --- |
+| [播放与存储](docs/MUSIC_FEATURES.md) | 当前功能、默认值、资源限制与验收边界 |
+| [fnOS 集成](docs/FNOS_INTEGRATION.md) | 安装、升级、数据目录、网关与恢复 |
+| [架构与安全](docs/ARCHITECTURE.md) | 代理、账号隔离与服务边界 |
+| [功能迁移矩阵](docs/FEATURE_MATRIX.md) | 参考项目对照及历史实现进度 |
+| [迁移计划](docs/MIGRATION_PLAN.md) | 分阶段设计与后续计划 |
 
-## v0.3.0-preview · 网易云账号管理
+## 参考项目与致谢
+
+| 项目 | 参考内容 |
+| --- | --- |
+| [javycoder/fnos_music_ext](https://github.com/javycoder/fnos_music_ext) | 主要功能设计与协议行为，包含 Socket 接管/恢复、搜索与播放、MusicBox 桥接、歌单注入、转码存储及 fnOS FPK 集成 |
+| [darknessomi/musicbox](https://github.com/darknessomi/musicbox) | 网易云接口调用、EAPI/WEAPI 加密、扫码登录与会话处理，主要参考 `NEMbox/api.py` 和 `NEMbox/encrypt.py` |
+
+本项目以 Go + Vue 3 独立重构，具体参考与迁移记录见[功能矩阵](docs/FEATURE_MATRIX.md)、[fnOS 集成说明](docs/FNOS_INTEGRATION.md)和[第三方来源记录](THIRD_PARTY_NOTICES.md)。
+
+## 许可与使用边界
+
+本项目采用 [MIT License](LICENSE)。代码许可证不包含音乐内容或平台 API 的使用授权；音频可用性取决于源站、歌曲资源和账号权益，本项目不绕过会员限制或 DRM。
+
+网易云接口可能随上游调整而失效。当前本地及模拟服务验证不能替代真实设备验收；播放 403 等兼容性修正仍需在 NAS 上复测，详见[发布说明](docs/V0_5_19_RELEASE_NOTES.md)。
+
+## 历史开发阶段
+
+<details>
+<summary>展开 v0.3–v0.5 初期开发记录</summary>
+
+以下内容描述对应阶段的能力与限制，保留供迁移追溯。当前行为以[播放与存储说明](docs/MUSIC_FEATURES.md)及最新发布说明为准。
+
+### v0.3.0-preview · 网易云账号管理
 
 本阶段新增 **可开关的用户隔离**：默认按飞牛用户 GUID 一对一绑定独立 MusicBox 实例；关闭隔离后，管理员可以在管理页面选择一个共享网易云账号，所有经飞牛身份验证的用户可使用该账号。切回隔离模式保留历史绑定，配置持久化在 `0600` 的 `${TRIM_PKGVAR}/accounts.json`，无需重启。
 
@@ -62,7 +150,7 @@ sudo ./dist/linux-amd64/fnmusic-go restore
 
 运行版本以 `packaging/fpk/manifest.in` 为准，构建时注入程序与管理页面。真实 fnOS 与音乐源的兼容性仍需设备验证。
 
-## v0.4.0-preview · 登录与歌单
+### v0.4.0-preview · 登录与歌单
 
 - 在管理员控制台为单个 MusicBox 实例生成网易云扫码挑战、手动检查扫码状态和登录状态。挑战密钥仅保留于 Go 内存 3 分钟，不存入账户文件；扫码二维码包含二维码密钥是扫码协议自身要求。服务端限制轮询频率，管理员管理接口必须经可信 fnOS 管理网关。
 - 支持只读列出当前实例登录的网易云账号**自己创建**的歌单、歌单歌曲（最多 1000 首）；不会把“收藏的其他人歌单”混入列表。
@@ -75,19 +163,21 @@ sudo ./dist/linux-amd64/fnmusic-go restore
 详细 API 和边界见 [v0.4 开发说明](docs/V0_4_RELEASE_NOTES.md)。
 
 
-## v0.5.0-preview · Go 原生网易云适配
+### v0.5.0-preview · Go 原生网易云适配
 
 添加账号时选择 **Go 原生网易云（实验性）**，输入账号 ID（仅允许字母/数字/下划线/减号）和显示名称。后端生成 `native://netease/<账号ID>`，不启动 Python、MusicBox 或 Docker。原有 `http://127.0.0.1:<端口>` MusicBox 桥接账号保持兼容，允许混合使用两类账号。
 
-### 原生实现范围
+#### 原生实现范围
 
 - 纯标准库 Go 的 EAPI 请求格式，提供搜索/分页、详情、歌词、音频 URL 获取、GET/HEAD/Range 转发（仅使用服务端根据当前账号权益返回的地址，试听/不可用内容拒绝）。
 - 管理端生成扫码挑战、轮询扫码状态、验证登录状态；持久化 `MUSIC_U` 登录会话于 `accounts.json` 同级的 `netease-sessions/<accountID>.json`（0600，目录 0700）。后端返回官方登录链接，管理页在本机生成可扫描二维码，不将登录链接发送给外部二维码服务。
 - 账号的自建歌单只读展示，先核对所登录网易云的账户 UID 再查歌单所有权，最多拉取 1000 首；每个账户独立 session/cookie；删除账号清理私有凭证。
 - 继续沿用 fnOS 已验证用户 GUID 的隔离/共享开关与原生 Socket 的客户端适配。
 
-### 重要限制
+#### 重要限制
 
 网易云 EAPI/WEAPI 属于**未公开、未承诺稳定**的协议。本地集成测试使用的是可控模拟响应，**尚未验证真实账号手机授权、VIP 权益、真实 fnOS App/FPK**（已验证匿名二维码生成和待扫码状态查询）。如上游接口变更，原生模式可能返回 401、403 或无法登录。切换到 MusicBox 桥接是手动兼容措施，并非保证可用。软件不附送音源凭证、不绕过收费或 DRM；仅在已授权范围内使用。实际互联网生产请求和版权/条款需用户自行确认。
 
 详细见 [docs/V0_5_RELEASE_NOTES.md](docs/V0_5_RELEASE_NOTES.md)。
+
+</details>
