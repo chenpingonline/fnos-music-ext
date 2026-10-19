@@ -210,7 +210,9 @@ func validateMedia(ctx context.Context, path string) error {
 	if FFmpeg() == "" {
 		return nil
 	}
-	if command(ctx, "-xerror", "-err_detect", "explode", "-protocol_whitelist", "file,pipe", "-i", path, "-map", "0:a:0", "-vn", "-f", "null", "-") != nil {
+	// Older FFmpeg versions can accept metadata-only/truncated files with exit 0.
+	// Require decoded output as well as strict decoder error handling.
+	if command(ctx, "-abort_on", "empty_output+empty_output_stream", "-xerror", "-err_detect", "explode", "-protocol_whitelist", "file,pipe", "-i", path, "-map", "0:a:0", "-vn", "-f", "null", "-") != nil {
 		return errors.New("音频解码完整性检查失败，未发布文件")
 	}
 	return nil

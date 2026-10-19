@@ -9,6 +9,11 @@ on:
       - scripts/build-binaries.sh
       - scripts/version.sh
       - packaging/fpk/manifest.in
+      - internal/**
+      - cmd/**
+      - web/**
+      - tests/**
+      - go.mod
 permissions:
   contents: read
 jobs:
