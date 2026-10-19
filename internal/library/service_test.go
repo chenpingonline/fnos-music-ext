@@ -221,7 +221,27 @@ func TestSaveMP3CoverAndLyricsWithFFmpeg(t *testing.T) {
 	if out, e := cmd.CombinedOutput(); e != nil {
 		t.Fatalf("fixture: %s %v", out, e)
 	}
+	if err := validateMedia(context.Background(), input); err != nil {
+		t.Fatal("valid FLAC rejected", err)
+	}
 	b, _ := os.ReadFile(input)
+	// A short, cleanly terminated stream can decode successfully even when
+	// its STREAMINFO still declares the original full length.
+	shortened := filepath.Join(dir, "shortened.flac")
+	if out, err := exec.Command(FFmpeg(), "-v", "error", "-i", input, "-t", "0.2", "-c:a", "flac", shortened).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	short, err := os.ReadFile(shortened)
+	if err != nil || len(short) < 42 || len(b) < 42 {
+		t.Fatal("invalid fixture", err)
+	}
+	copy(short[18:26], b[18:26])
+	if err := os.WriteFile(shortened, short, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if validateMedia(context.Background(), shortened) == nil {
+		t.Fatal("FLAC sample-count mismatch passed")
+	}
 	broken := filepath.Join(dir, "broken.flac")
 	os.WriteFile(broken, b[:len(b)/2], 0600)
 	if validateMedia(context.Background(), broken) == nil {

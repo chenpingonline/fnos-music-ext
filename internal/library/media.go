@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
@@ -206,14 +207,43 @@ func tagAudio(ctx context.Context, input, output string, t provider.Track) error
 	return command(ctx, "-protocol_whitelist", "file,pipe", "-i", input, "-map", "0:a:0", "-c:a", "copy", "-metadata", "title="+t.Title, "-metadata", "artist="+strings.Join(t.Artists, " / "), "-metadata", "album="+t.Album, output)
 }
 
+// pcmBytes counts decoded mono 16-bit samples without retaining audio in memory.
+type pcmBytes struct{ n uint64 }
+
+func (c *pcmBytes) Write(p []byte) (int, error) { c.n += uint64(len(p)); return len(p), nil }
+
 func validateMedia(ctx context.Context, path string) error {
-	if FFmpeg() == "" {
+	ffmpeg := FFmpeg()
+	if ffmpeg == "" {
 		return nil
 	}
-	// Older FFmpeg versions can accept metadata-only/truncated files with exit 0.
-	// Require decoded output as well as strict decoder error handling.
-	if command(ctx, "-abort_on", "empty_output+empty_output_stream", "-xerror", "-err_detect", "explode", "-protocol_whitelist", "file,pipe", "-i", path, "-map", "0:a:0", "-vn", "-f", "null", "-") != nil {
-		return errors.New("音频解码完整性检查失败，未发布文件")
+	invalid := errors.New("音频解码完整性检查失败，未发布文件")
+	f, err := os.Open(path)
+	if err != nil {
+		return invalid
+	}
+	var header [42]byte
+	n, _ := io.ReadFull(f, header[:])
+	f.Close()
+	var expected uint64
+	if n >= 4 && string(header[:4]) == "fLaC" {
+		// RFC 9639 §8.2: first block is 34-byte STREAMINFO; its packed
+		// 64-bit rate/channel/depth/sample field starts at file offset 18.
+		if n < len(header) || header[4]&0x7f != 0 || !bytes.Equal(header[5:8], []byte{0, 0, 34}) {
+			return invalid
+		}
+		expected = binary.BigEndian.Uint64(header[18:26]) & ((1 << 36) - 1)
+	}
+	// FFmpeg 6 may exit zero after decoding only complete frames from a
+	// truncated FLAC. Decode once, count samples, and compare to STREAMINFO.
+	// Preserve input sample rate; mono/s16le gives exactly two bytes/sample.
+	cmd := exec.CommandContext(ctx, ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-abort_on", "empty_output+empty_output_stream", "-xerror", "-err_detect", "explode", "-protocol_whitelist", "file,pipe", "-i", path, "-map", "0:a:0", "-vn", "-ac", "1", "-c:a", "pcm_s16le", "-f", "s16le", "-")
+	var decoded pcmBytes
+	cmd.Stdout = &decoded
+	cmd.Stderr = io.Discard
+	cmd.Env = append(os.Environ(), "GCONV_PATH=")
+	if cmd.Run() != nil || decoded.n == 0 || decoded.n%2 != 0 || expected > 0 && decoded.n/2 != expected {
+		return invalid
 	}
 	return nil
 }
