@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/chenpingonline/fnos-music-ext/internal/diagnostics"
 	"io"
 	"net/http"
 	"net/url"
@@ -45,7 +46,7 @@ func (b *Bridge) requestMusicBox(ctx context.Context, method, path string, q url
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("%w: HTTP %d", ErrUnavailable, res.StatusCode)
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, &diagnostics.HTTPError{Status: res.StatusCode})
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20+1))
 	if err != nil || len(raw) > 1<<20 {
@@ -187,7 +188,7 @@ func (b *Bridge) ListPlaylists(ctx context.Context, user provider.User) ([]provi
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("%w: playlist HTTP %d", ErrUnavailable, res.StatusCode)
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, &diagnostics.HTTPError{Status: res.StatusCode})
 	}
 	var payload struct {
 		OK         bool                         `json:"ok"`
@@ -238,9 +239,6 @@ func (b *Bridge) PlaylistTracks(ctx context.Context, user provider.User, playlis
 	var rows []json.RawMessage
 	if json.Unmarshal(raw, &rows) != nil {
 		return nil, errors.New("invalid playlist track response")
-	}
-	if len(rows) > 1000 {
-		rows = rows[:1000]
 	}
 	result := make([]provider.Track, 0, len(rows))
 	for _, row := range rows {

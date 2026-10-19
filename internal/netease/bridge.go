@@ -4,7 +4,6 @@
 package netease
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -63,11 +62,11 @@ func (b *Bridge) get(ctx context.Context, path string, q url.Values) (json.RawMe
 	}
 	resp, e := b.client.Do(req)
 	if e != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, e)
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, e)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%w: HTTP %d", ErrUnavailable, resp.StatusCode)
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, playbackHTTPError("musicbox-api", resp.StatusCode))
 	}
 	var envelope struct {
 		OK   *bool           `json:"ok"`
@@ -92,7 +91,7 @@ func (b *Bridge) Health(ctx context.Context) error {
 	}
 	resp, e := b.client.Do(req)
 	if e != nil {
-		return fmt.Errorf("%w: %v", ErrUnavailable, e)
+		return fmt.Errorf("%w: %w", ErrUnavailable, e)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -234,20 +233,24 @@ func (b *Bridge) Play(ctx context.Context, user provider.User, req provider.Play
 			return provider.Stream{}, errors.New("invalid Range")
 		}
 		r.Header.Set("Range", req.Range)
+		if req.IfRange != "" {
+			r.Header.Set("If-Range", req.IfRange)
+		}
 	}
+	r.Header.Set("User-Agent", mediaUserAgent)
 	resp, e := b.media.Do(r)
 	if e != nil {
 		return provider.Stream{}, e
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
 		resp.Body.Close()
-		return provider.Stream{}, fmt.Errorf("media HTTP %d", resp.StatusCode)
+		return provider.Stream{}, playbackHTTPError("media-cdn", resp.StatusCode)
 	}
 	ct := resp.Header.Get("Content-Type")
 	if ct == "" {
 		ct = "audio/mpeg"
 	}
-	return provider.Stream{Body: resp.Body, StatusCode: resp.StatusCode, ContentType: ct, ContentRange: resp.Header.Get("Content-Range"), ContentLength: resp.ContentLength}, nil
+	return provider.Stream{Body: resp.Body, StatusCode: resp.StatusCode, ContentType: ct, ContentRange: resp.Header.Get("Content-Range"), ContentLength: resp.ContentLength, ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified")}, nil
 }
 func validID(id string) bool {
 	if id == "" || len(id) > 20 {
@@ -370,36 +373,21 @@ func parseTrack(raw json.RawMessage) (provider.Track, error) {
 // OpenCover streams a bounded same-origin image. External redirects and
 // non-public destination IPs are blocked by the media transport.
 func (b *Bridge) OpenCover(ctx context.Context, user provider.User, id string) (provider.Stream, error) {
-	track, e := b.GetTrack(ctx, user, id)
-	if e != nil {
-		return provider.Stream{}, e
+	return b.OpenCoverSized(ctx, user, id, 0)
+}
+func (b *Bridge) OpenCoverSized(ctx context.Context, user provider.User, id string, size int) (provider.Stream, error) {
+	track, err := b.GetTrack(ctx, user, id)
+	if err != nil {
+		return provider.Stream{}, err
 	}
-	u, e := url.Parse(track.CoverURL)
-	if e != nil || !safeMediaURL(u) {
-		return provider.Stream{}, errors.New("untrusted cover URL")
-	}
-	req, e := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if e != nil {
-		return provider.Stream{}, e
-	}
-	resp, e := b.media.Do(req)
-	if e != nil {
-		return provider.Stream{}, e
-	}
-	if resp.StatusCode != 200 || resp.ContentLength > 6<<20 {
-		resp.Body.Close()
-		return provider.Stream{}, errors.New("cover unavailable or exceeds limit")
-	}
-	ct := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(strings.ToLower(ct), "image/") {
-		resp.Body.Close()
-		return provider.Stream{}, errors.New("unexpected cover content type")
-	}
-	// Bounded memory read before answering to avoid partial oversized images.
-	body, e := io.ReadAll(io.LimitReader(resp.Body, (6<<20)+1))
-	resp.Body.Close()
-	if e != nil || len(body) > 6<<20 {
-		return provider.Stream{}, errors.New("cover exceeds size limit")
-	}
-	return provider.Stream{Body: io.NopCloser(bytes.NewReader(body)), StatusCode: 200, ContentType: ct, ContentLength: int64(len(body))}, nil
+	return b.OpenTrackCoverSized(ctx, user, track, size)
+}
+
+// OpenTrackCover uses metadata already obtained from a search or playlist.
+func (b *Bridge) OpenTrackCover(ctx context.Context, user provider.User, track provider.Track) (provider.Stream, error) {
+	return b.OpenTrackCoverSized(ctx, user, track, 0)
+}
+
+func (b *Bridge) OpenTrackCoverSized(ctx context.Context, user provider.User, track provider.Track, size int) (provider.Stream, error) {
+	return openPlaylistImageSized(ctx, b.media, user, provider.Playlist{CoverURL: track.CoverURL}, size)
 }

@@ -1,0 +1,35 @@
+:root {
+  color-scheme: light;
+  --frame: #f3f3f3; --canvas: #ffffff; --surface: #f6f6f7;
+  --text: #202124; --muted: #62666e; --subtle: #757a83;
+  --line: #e1e2e5; --line-soft: #eeeff1; --hover: #e9e9ec;
+  --nav-active: #ffffff; --selected: #eff5ff;
+  --accent: #1769d5; --accent-hover: #105abf; --on-accent: #ffffff;
+  --danger: #b53632; --danger-bg: #fff1ef; --danger-line: #f0cecb;
+  --success: #28804d; --success-bg: #edf7f0;
+  --scroll-thumb: #c7c9ce; --switch-off: #b7bbc3;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --frame: #0c0c0d; --canvas: #1f2021; --surface: #28292b;
+  --text: #f1f1f2; --muted: #b0b2b9; --subtle: #969aa4;
+  --line: #3b3d40; --line-soft: #303235; --hover: #232426;
+  --nav-active: #202122; --selected: #253246;
+  --accent: #79acff; --accent-hover: #94bdff; --on-accent: #101a2c;
+  --danger: #ffaaa5; --danger-bg: #432a2a; --danger-line: #66403d;
+  --success: #8bd6ac; --success-bg: #253a2e;
+  --scroll-thumb: #53565d; --switch-off: #5c6068;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --frame: #0c0c0d; --canvas: #1f2021; --surface: #28292b;
+    --text: #f1f1f2; --muted: #b0b2b9; --subtle: #969aa4;
+    --line: #3b3d40; --line-soft: #303235; --hover: #232426;
+    --nav-active: #202122; --selected: #253246;
+    --accent: #79acff; --accent-hover: #94bdff; --on-accent: #101a2c;
+    --danger: #ffaaa5; --danger-bg: #432a2a; --danger-line: #66403d;
+    --success: #8bd6ac; --success-bg: #253a2e;
+    --scroll-thumb: #53565d; --switch-off: #5c6068;
+  }
+}

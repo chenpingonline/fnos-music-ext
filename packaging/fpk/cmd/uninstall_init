@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SELF_DIR}/_common"
-systemctl stop "${UNIT}" || true
-if [ -f /run/fnmusic-go/ownership.json ]; then
-  "${BINARY}" restore || { echo '无法验证原生 Socket 恢复；中止卸载防止破坏官方音乐' >&2; exit 1; }
+require_own_unit
+check_dropin
+stop_service
+if [[ -f "$SERVICE_FILE" ]]; then
+  systemctl disable "$UNIT"
+  rm -f "$SERVICE_FILE"
 fi
-if [ -f "${SERVICE_FILE}" ]; then
-  grep -Fqx "WorkingDirectory=${PAYLOAD}" "${SERVICE_FILE}" || { echo 'unit 不属于当前安装目录，拒绝删除' >&2; exit 1; }
-  systemctl disable "${UNIT}" || true
-  rm -f "${SERVICE_FILE}"
-  systemctl daemon-reload
-fi
+rm -f "$DROPIN"
+rmdir "${SERVICE_FILE}.d" 2>/dev/null || true
+systemctl daemon-reload
+# Credentials and configuration remain in fnOS-managed var/etc; no implicit wipe.

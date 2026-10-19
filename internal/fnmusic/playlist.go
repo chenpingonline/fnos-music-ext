@@ -38,7 +38,15 @@ func PlaylistVO(scope string, p provider.Playlist) (map[string]any, bool) {
 	if !ok {
 		return nil, false
 	}
+	description := "网易云自建歌单（只读）"
+	if p.Kind == "public" {
+		description = "网易云公共歌单（只读）"
+	}
+	if p.Kind == "recommend" {
+		description = "推荐歌单（只读）"
+	}
 	return map[string]any{"guid": guid, "id": guid, "name": p.Title, "title": p.Title,
-		"coverId": guid, "coverUrl": "", "trackCount": p.TrackCount, "type": 0,
-		"isDaily": true, "readOnly": true, "isFavorite": false, "description": "网易云自建歌单（只读）"}, true
+		"createdAt": int64(0), "updatedAt": int64(0),
+		"coverId": "track_" + guid, "coverUrl": "/music/api/v1/static/cover?coverId=track_" + guid, "trackCount": p.TrackCount, "type": 0,
+		"isDaily": true, "readOnly": true, "isFavorite": false, "description": description}, true
 }

@@ -1,27 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SELF_DIR}/_common"
-[ -x "${BINARY}" ] || { echo "missing runtime ${BINARY}" >&2; exit 1; }
-if [ -f "${SERVICE_FILE}" ]; then
-  # Update must not silently inherit a unit pointing at another installation.
-  grep -Fqx "WorkingDirectory=${PAYLOAD}" "${SERVICE_FILE}" || { echo 'unit deployment ownership mismatch' >&2; exit 1; }
-else
-  echo 'missing service unit, install a fresh package' >&2; exit 1
-fi
-# Upgrade from 0.1: add an opt-in provider configuration without modifying
-# the previous unit's ExecStart or replacing foreign systemd definitions.
-mkdir -p /var/lib/fnmusic-go
-chmod 0700 /var/lib/fnmusic-go
-if [ ! -e /var/lib/fnmusic-go/provider.env ]; then
-  printf 'FNMUSIC_GO_NETEASE_URL=\nFNMUSIC_GO_NETEASE_USER_GUID=\n' > /var/lib/fnmusic-go/provider.env
-  chmod 0600 /var/lib/fnmusic-go/provider.env
-fi
-DROPIN_DIR="/etc/systemd/system/${UNIT}.d"
-mkdir -p "${DROPIN_DIR}"
-cat > "${DROPIN_DIR}/20-fnmusic-provider.conf" <<'UNITDROPIN'
-[Service]
-EnvironmentFile=-/var/lib/fnmusic-go/provider.env
-UNITDROPIN
-systemctl daemon-reload
-systemctl enable --now "${UNIT}"
+install_unit

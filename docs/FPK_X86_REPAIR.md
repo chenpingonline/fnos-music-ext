@@ -16,8 +16,8 @@ Use the official fnpack version 1.2.3+ on Linux with Go 1.23+:
 bash scripts/build-fpk-x86.sh
 ```
 
-This compiles only Linux AMD64 and creates a clean staging directory with `app/`, `cmd/`, `config/{privilege,resource}`, `wizard/`, `manifest`, and icons, then calls `fnpack build`. Do not package the ARM64 binary in the x86 FPK.
+The wrapper calls the shared builder with `--arch x86`, compiles only Linux AMD64 and creates `dist/fpk-stage/x86/` as a clean staging directory with `app/`, `cmd/`, `config/{privilege,resource}`, `wizard/`, `manifest`, and icons, then calls `fnpack build`. Do not package the ARM64 binary in the x86 FPK.
 
-When official fnpack is not available, a compatibility GNU tar-built candidate was generated separately for local testing. It has been audited for MD5, ELF architecture, paths, and tar headers, but has **not** passed a real fnOS installer test.
+Historically, when official fnpack was unavailable, a compatibility GNU tar-built candidate was generated separately for local testing. The current builder requires official fnpack and does not generate such candidates. It has been audited for MD5, ELF architecture, paths, and tar headers, but has **not** passed a real fnOS installer test.
 
 Before production use, verify manual installation, start/stop, socket recovery, upgrade and uninstall in a dedicated fnOS test machine. If fnOS rejects the package, collect the output of `sudo appcenter-cli install-fpk /path/to/file.fpk` and the fnOS version.

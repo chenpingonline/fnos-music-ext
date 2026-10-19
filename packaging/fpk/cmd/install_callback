@@ -1,42 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SELF_DIR}/_common"
-[ -x "${BINARY}" ] || { echo "missing runtime ${BINARY}" >&2; exit 1; }
-[ -S /var/run/trim_music.socket ] || { echo '官方音乐未启动' >&2; exit 1; }
-[ ! -f "${SERVICE_FILE}" ] || { echo "service ${UNIT} already exists; refuse to overwrite" >&2; exit 1; }
-# v0.1 safety choice: root service required for socket ownership operations.
-# Next phase will split privileged takeover helper from lower-privilege gateway.
-cat > "${SERVICE_FILE}" <<UNITFILE
-[Unit]
-Description=fnMusic Go native extension (reversible Unix Socket proxy)
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=${PAYLOAD}
-EnvironmentFile=-/var/lib/fnmusic-go/provider.env
-ExecStart=${BINARY} serve --admin-socket ${ADMIN_SOCK}
-ExecStopPost=/bin/sh -c 'test ! -f /run/fnmusic-go/ownership.json || ${BINARY} restore'
-Restart=no
-TimeoutStartSec=35
-TimeoutStopSec=30
-UMask=0077
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-UNITFILE
-mkdir -p /var/lib/fnmusic-go
-chmod 0700 /var/lib/fnmusic-go
-if [ ! -e /var/lib/fnmusic-go/provider.env ]; then
-  printf 'FNMUSIC_GO_NETEASE_URL=\nFNMUSIC_GO_NETEASE_USER_GUID=\n' > /var/lib/fnmusic-go/provider.env
-  chmod 0600 /var/lib/fnmusic-go/provider.env
-fi
-systemctl daemon-reload
-systemctl enable --now "${UNIT}" || { systemctl stop "${UNIT}" || true; echo '启动失败，请检查 journalctl -u fnmusic-go' >&2; exit 1; }
-# The app-center script must not claim full readiness merely because systemd returned.
-sleep 1
-service_state || { echo '服务未保持运行' >&2; exit 1; }
-"${BINARY}" status
+# Configure only. fnOS app-center invokes cmd/main to control runtime state.
+install_unit

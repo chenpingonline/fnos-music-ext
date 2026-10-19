@@ -23,15 +23,27 @@ func (u User) Validate() error {
 	return nil
 }
 
+type AudioInfo struct {
+	Format  string `json:"format"`
+	Codec   string `json:"codec"`
+	Size    int64  `json:"size"`
+	Quality string `json:"quality"`
+}
 type Track struct {
-	ID         string   `json:"id"`
-	Source     string   `json:"source"`
-	Title      string   `json:"title"`
-	Artists    []string `json:"artists"`
-	Album      string   `json:"album"`
-	DurationMS int64    `json:"duration_ms"`
-	CoverURL   string   `json:"cover_url,omitempty"`
-	Playable   bool     `json:"playable"`
+	Audio        *AudioInfo `json:"audio,omitempty"`
+	ID           string     `json:"id"`
+	Source       string     `json:"source"`
+	Title        string     `json:"title"`
+	Artists      []string   `json:"artists"`
+	Album        string     `json:"album"`
+	DurationMS   int64      `json:"duration_ms"`
+	CoverURL     string     `json:"cover_url,omitempty"`
+	Playable     bool       `json:"playable"`
+	AccessStatus int        `json:"access_status,omitempty"`
+}
+type TrackPage struct {
+	Tracks []Track
+	Total  int
 }
 type SearchRequest struct {
 	Keyword       string
@@ -45,18 +57,21 @@ type SearchPage struct {
 type PlaybackRequest struct {
 	TrackID, Quality string
 	Range            string
+	IfRange          string
 }
 type Stream struct {
 	Body                      io.ReadCloser
 	StatusCode                int
 	ContentType, ContentRange string
 	ContentLength             int64
+	ETag, LastModified        string
 }
 type Lyrics struct {
 	LRC           string
 	TranslatedLRC string
 }
 type Playlist struct {
+	Kind       string  `json:"kind,omitempty"`
 	ID         string  `json:"id"`
 	Title      string  `json:"title"`
 	CoverURL   string  `json:"cover_url"`

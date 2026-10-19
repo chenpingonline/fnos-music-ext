@@ -1,20 +1,153 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 APPNAME=fnmusic-go
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd "${SELF_DIR}/.." && pwd)"
-if [[ -n "${TRIM_APPDEST:-}" && -f "${TRIM_APPDEST}/bin/linux-amd64/fnmusic-go" ]]; then
-  PAYLOAD="${TRIM_APPDEST}"
-else
-  PAYLOAD="${APP_ROOT}/target"
-fi
+fail(){
+  echo "$*" >&2
+  if [[ -n "${TRIM_TEMP_LOGFILE:-}" ]]; then printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE"; fi
+  exit 1
+}
+trap 'fail "应用操作失败（脚本第 ${LINENO} 行），请查看应用日志。"' ERR
+PAYLOAD="${TRIM_APPDEST:-${APP_ROOT}/target}"
+DATA_DIR="${TRIM_PKGVAR:-${APP_ROOT}/var}"
+CONFIG_DIR="${TRIM_PKGETC:-${APP_ROOT}/etc}"
+# Socket publication uses renameat2 into /var/run; staging must be on /run's FS.
+STATE_DIR=/run/fnmusic-go
+LEGACY_DATA=/var/lib/fnmusic-go
 case "$(uname -m)" in
   x86_64) APP_ARCH=linux-amd64 ;;
   aarch64|arm64) APP_ARCH=linux-arm64 ;;
-  *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+  *) fail "不支持当前设备架构 $(uname -m)" ;;
 esac
 BINARY="${PAYLOAD}/bin/${APP_ARCH}/fnmusic-go"
 ADMIN_SOCK="${PAYLOAD}/fnmusic-go.sock"
-UNIT="fnmusic-go.service"
+UNIT=fnmusic-go.service
 SERVICE_FILE="/etc/systemd/system/${UNIT}"
-service_state(){ systemctl is-active --quiet "${UNIT}"; }
+DROPIN="${SERVICE_FILE}.d/20-fnmusic-provider.conf"
+service_state(){ systemctl is-active --quiet "$UNIT"; }
+service_failure(){
+  local action="$1" detail="${2:-}" state
+  state="$(systemctl show "$UNIT" -p LoadState -p ActiveState -p Result -p ExecMainStatus --no-pager 2>/dev/null || true)"
+  fail "${action}${detail:+：$detail}${state:+
+$state}
+请查看 journalctl -u fnmusic-go.service -n 60 --no-pager。"
+}
+require_binary(){ [[ -x "$BINARY" ]] || fail "缺少当前架构的可执行文件：${APP_ARCH}"; }
+require_own_unit(){
+  if [[ -e "$SERVICE_FILE" || -L "$SERVICE_FILE" ]]; then
+    [[ -f "$SERVICE_FILE" && ! -L "$SERVICE_FILE" ]] || fail '服务配置不是本应用的普通文件，拒绝修改。'
+    local old_path
+    old_path="$(sed -n 's/^WorkingDirectory=//p' "$SERVICE_FILE")"
+    old_path="${old_path#\"}"; old_path="${old_path%\"}"
+    [[ -n "$old_path" && -d "$old_path" && -d "$PAYLOAD" ]] || fail '服务安装目录无效，拒绝修改。'
+    [[ "$(cd "$old_path" && pwd -P)" == "$(cd "$PAYLOAD" && pwd -P)" ]] || fail '服务属于其他安装目录，拒绝修改。'
+  fi
+}
+check_dropin(){
+  if [[ -e "$DROPIN" || -L "$DROPIN" ]]; then
+    [[ -f "$DROPIN" && ! -L "$DROPIN" ]] || fail '升级配置不是普通文件，拒绝清理。'
+    printf '[Service]\nEnvironmentFile=-/var/lib/fnmusic-go/provider.env\n' | cmp -s - "$DROPIN" || fail '升级配置被手工修改，请先备份并移除 20-fnmusic-provider.conf。'
+  fi
+}
+prepare_data(){
+  umask 077
+  mkdir -p "$DATA_DIR" "$CONFIG_DIR" "$STATE_DIR"
+  # fnOS may expose its managed directories through system-created symlinks.
+  DATA_DIR="$(cd "$DATA_DIR" && pwd -P)"
+  CONFIG_DIR="$(cd "$CONFIG_DIR" && pwd -P)"
+  STATE_DIR="$(cd "$STATE_DIR" && pwd -P)"
+  chmod 0700 "$DATA_DIR" "$CONFIG_DIR" "$STATE_DIR"
+  # Import legacy credentials once, retaining the original as a recovery backup.
+  # Each item is renamed atomically; a retry may resume an interrupted import.
+  if [[ ! -e "$DATA_DIR/.legacy-migrated" && -d "$LEGACY_DATA" ]]; then
+    [[ ! -L "$LEGACY_DATA" ]] || fail '旧数据目录是软链接，拒绝迁移。'
+    local item destination staged
+    for item in accounts.json netease-sessions provider.env; do
+      [[ -e "$LEGACY_DATA/$item" ]] || continue
+      [[ ! -L "$LEGACY_DATA/$item" ]] || fail "旧数据 $item 是软链接，拒绝迁移。"
+      destination="$DATA_DIR/$item"
+      [[ "$item" != provider.env ]] || destination="$CONFIG_DIR/$item"
+      [[ ! -L "$destination" ]] || fail "迁移目标 $item 是软链接，拒绝覆盖。"
+      if [[ -e "$destination" ]]; then
+        diff -qr "$LEGACY_DATA/$item" "$destination" >/dev/null || fail "迁移目标 $item 已存在不同内容，请先备份处理。"
+        continue
+      fi
+      staged="$(mktemp -d "$DATA_DIR/.import.XXXXXX")"
+      cp -a "$LEGACY_DATA/$item" "$staged/$item"
+      if [[ -d "$staged/$item" ]]; then
+        [[ -z "$(find "$staged/$item" -type l -print -quit)" ]] || fail '旧凭证含软链接，拒绝迁移。'
+        find "$staged/$item" -type d -exec chmod 0700 {} +
+        find "$staged/$item" -type f -exec chmod 0600 {} +
+      else
+        [[ -f "$staged/$item" ]] || fail '旧配置不是普通文件。'
+        chmod 0600 "$staged/$item"
+      fi
+      mv "$staged/$item" "$destination"
+      rmdir "$staged"
+    done
+  fi
+  touch "$DATA_DIR/.legacy-migrated"
+  [[ ! -L "$CONFIG_DIR/provider.env" ]] || fail 'provider.env 不能是软链接。'
+  if [[ ! -e "$CONFIG_DIR/provider.env" ]]; then
+    printf 'FNMUSIC_GO_NETEASE_URL=\nFNMUSIC_GO_NETEASE_USER_GUID=\n' > "$CONFIG_DIR/provider.env"
+  fi
+  chmod 0600 "$CONFIG_DIR/provider.env"
+}
+stop_service(){
+  require_own_unit
+  local stop_error
+  if [[ -f "$SERVICE_FILE" ]]; then
+    if ! stop_error="$(systemctl stop "$UNIT" 2>&1)"; then
+      if service_state; then service_failure '服务未能停止' "$stop_error"; fi
+    fi
+  fi
+  if service_state; then fail '服务仍在运行，拒绝继续。'; fi
+  if [[ -f "$STATE_DIR/ownership.json" ]]; then
+    require_binary
+    "$BINARY" restore --state-dir "$STATE_DIR" || fail '官方音乐 Socket 恢复失败，已保留状态并中止操作。'
+    [[ ! -f "$STATE_DIR/ownership.json" ]] || fail '官方音乐 Socket 尚未恢复。'
+  fi
+}
+install_unit(){
+  require_binary
+  require_own_unit
+  check_dropin
+  prepare_data
+  local staged backup drop_backup
+  staged="$(mktemp "${SERVICE_FILE}.XXXXXX")"
+  backup="${staged}.old"; drop_backup="${staged}.dropin"
+  [[ ! -f "$SERVICE_FILE" ]] || cp -p "$SERVICE_FILE" "$backup"
+  [[ ! -f "$DROPIN" ]] || cp -p "$DROPIN" "$drop_backup"
+  cat > "$staged" <<UNITFILE
+# Managed by fnmusic-go; app-center controls start and stop.
+[Unit]
+Description=fnMusic Go native extension (reversible Unix Socket proxy)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${PAYLOAD}
+EnvironmentFile=-${CONFIG_DIR}/provider.env
+ExecStart="${BINARY}" serve --admin-socket "${ADMIN_SOCK}" --account-state "${DATA_DIR}/accounts.json" --state-dir "${STATE_DIR}"
+ExecStopPost="${BINARY}" restore-if-needed --state-dir "${STATE_DIR}"
+Restart=no
+TimeoutStartSec=35
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+UNITFILE
+  chmod 0644 "$staged"
+  if [[ -f "$SERVICE_FILE" ]]; then systemctl disable "$UNIT"; fi
+  mv "$staged" "$SERVICE_FILE"
+  rm -f "$DROPIN"
+  if ! systemctl daemon-reload; then
+    if [[ -f "$backup" ]]; then mv "$backup" "$SERVICE_FILE"; else rm -f "$SERVICE_FILE"; fi
+    [[ ! -f "$drop_backup" ]] || mv "$drop_backup" "$DROPIN"
+    systemctl daemon-reload || true
+    fail '重载服务配置失败，已恢复原服务配置。'
+  fi
+  rm -f "$backup" "$drop_backup"
+  rmdir "${SERVICE_FILE}.d" 2>/dev/null || true
+}

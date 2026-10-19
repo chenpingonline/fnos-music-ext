@@ -19,8 +19,10 @@ import (
 
 	"github.com/chenpingonline/fnos-music-ext/internal/accounts"
 	"github.com/chenpingonline/fnos-music-ext/internal/admin"
+	"github.com/chenpingonline/fnos-music-ext/internal/buildinfo"
 	"github.com/chenpingonline/fnos-music-ext/internal/gateway"
 	"github.com/chenpingonline/fnos-music-ext/internal/netease"
+	"github.com/chenpingonline/fnos-music-ext/internal/preferences"
 	"github.com/chenpingonline/fnos-music-ext/internal/takeover"
 )
 
@@ -35,18 +37,22 @@ func run(args []string) error {
 		return errors.New("usage: fnmusic-go serve|status|restore|version [flags]")
 	}
 	if args[0] == "version" {
-		fmt.Println("fnmusic-go v0.5.0-preview")
+		fmt.Println("fnmusic-go v" + buildinfo.Version)
 		return nil
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	target := f.String("target", "/var/run/trim_music.socket", "official socket path")
 	upstream := f.String("upstream", "/var/run/trim_music_upstream.socket", "original service socket path")
-	stateDir := f.String("state-dir", "/run/fnmusic-go", "owned journal and private staging directory")
+	stateDir := f.String("state-dir", "/run/fnmusic-go", "owned journal and private staging directory (same filesystem as official socket)")
 	officialExe := f.String("official-exe", "trim-music", "trusted official process executable name")
 	adminSocket := f.String("admin-socket", "", "fnOS desktop gateway socket (serve only)")
-	gatewayUID := f.Int("gateway-uid", 0, "trusted fnOS gateway process UID; default 0")
+	gatewayUID := f.Int("gateway-uid", -1, "trusted gateway UID override; default verifies nginx worker and root master")
 	musicboxURL := f.String("netease-url", os.Getenv("FNMUSIC_GO_NETEASE_URL"), "loopback MusicBox REST API URL; optional")
-	accountsFile := f.String("account-state", "/var/lib/fnmusic-go/accounts.json", "private JSON account configuration (0600)")
+	dataDir := os.Getenv("TRIM_PKGVAR")
+	if dataDir == "" {
+		dataDir = "/var/apps/fnmusic-go/var"
+	}
+	accountsFile := f.String("account-state", filepath.Join(dataDir, "accounts.json"), "private JSON account configuration (0600)")
 	neteaseUser := f.String("netease-user-guid", os.Getenv("FNMUSIC_GO_NETEASE_USER_GUID"), "verified fnOS user GUID permitted to use the MusicBox instance; required to enable")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
@@ -59,6 +65,15 @@ func run(args []string) error {
 		return nil
 	case "restore":
 		return takeover.Restore(cfg)
+	case "restore-if-needed":
+		if _, err := os.Lstat(filepath.Join(*stateDir, "ownership.json")); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		return takeover.Restore(cfg)
+	case "health":
+		return adminHealth(*adminSocket)
 	case "serve":
 		return serve(cfg, *adminSocket, *gatewayUID, *accountsFile, *musicboxURL, *neteaseUser)
 	default:
@@ -115,6 +130,13 @@ func serve(cfg takeover.Config, adminPath string, trustedUID int, accountsFile, 
 		}
 	}
 	gw.SetAccounts(manager)
+	settings, err := preferences.New(filepath.Join(filepath.Dir(accountsFile), "music-settings.json"))
+	if err != nil {
+		return err
+	}
+	if err = gw.Configure(filepath.Dir(accountsFile), settings); err != nil {
+		return err
+	}
 	defer gw.Close()
 	musicSrv := &http.Server{Handler: gw, ReadHeaderTimeout: 10 * time.Second}
 	musicDone := make(chan error, 1)
@@ -136,9 +158,9 @@ func serve(cfg takeover.Config, adminPath string, trustedUID int, accountsFile, 
 	if err = os.Chmod(adminPath, 0666); err != nil {
 		return err
 	}
-	admSrv := &http.Server{Handler: admin.New(admin.Config{Socket: cfg, Accounts: manager}), ReadHeaderTimeout: 10 * time.Second}
+	admSrv := &http.Server{Handler: admin.New(admin.Config{Socket: cfg, Accounts: manager, Settings: settings, Media: gw.Media(), RetryTask: gw.RetryTask}), ReadHeaderTimeout: 10 * time.Second}
 	admDone := make(chan error, 1)
-	go func() { admDone <- admSrv.Serve(onlyUIDListener{Listener: al, uid: uint32(trustedUID)}) }()
+	go func() { admDone <- admSrv.Serve(onlyUIDListener{Listener: al, uid: trustedUID}) }()
 	// Before publish the proxy is live on a private staging pathname.
 	// chmod 0666 matches the official fnOS gateway accessibility; this is safe only
 	// after ownership and identity checks and while the root-only supervisor controls it.
@@ -190,7 +212,7 @@ func probe(socket string) error {
 // onlyUIDListener rejects forged admin headers from non-gateway local processes.
 type onlyUIDListener struct {
 	net.Listener
-	uid uint32
+	uid int
 }
 
 func (l onlyUIDListener) Accept() (net.Conn, error) {
@@ -214,7 +236,7 @@ func (l onlyUIDListener) Accept() (net.Conn, error) {
 		e = raw.Control(func(fd uintptr) {
 			got, credErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
 		})
-		if e != nil || credErr != nil || got == nil || got.Uid != l.uid {
+		if e != nil || credErr != nil || got == nil || !trustedGatewayPeer(got, l.uid) {
 			_ = c.Close()
 			continue
 		}

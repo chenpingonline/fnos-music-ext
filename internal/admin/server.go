@@ -9,20 +9,30 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/chenpingonline/fnos-music-ext/internal/accounts"
+	"github.com/chenpingonline/fnos-music-ext/internal/buildinfo"
+	"github.com/chenpingonline/fnos-music-ext/internal/library"
+	"github.com/chenpingonline/fnos-music-ext/internal/netease"
+	"github.com/chenpingonline/fnos-music-ext/internal/preferences"
 	"github.com/chenpingonline/fnos-music-ext/internal/takeover"
+	"github.com/chenpingonline/fnos-music-ext/internal/userdir"
 )
 
 //go:embed assets/*
 var embedded embed.FS
 
 type Config struct {
-	Socket   takeover.Config
-	Prefix   string
-	Accounts *accounts.Manager
+	UserDirectory func() ([]userdir.User, error)
+	Socket        takeover.Config
+	Prefix        string
+	Accounts      *accounts.Manager
+	Settings      *preferences.Store
+	Media         *library.Service
+	RetryTask     func(string) error
 }
 
 // Protect mutations against cross-site form submissions. X-Trim-Isadmin is
@@ -31,6 +41,14 @@ type Config struct {
 func managementRequest(r *http.Request) bool {
 	if r.Header.Get("X-FnMusic-Admin") != "1" || !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
 		return false
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" || site == "same-site" {
+		return false
+	}
+	// The fnOS gateway may rewrite Host. A token fetched through its authenticated
+	// same-origin API proves the browser can read this administrator's responses.
+	if valid, _ := r.Context().Value(csrfKey{}).(bool); valid {
+		return true
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
 		// Exact origin comparison, no permissive substring matching.
@@ -42,10 +60,14 @@ func managementRequest(r *http.Request) bool {
 	return true
 }
 func decode(r *http.Request, v any) error {
-	if r.ContentLength > 16384 {
+	limit := int64(16384)
+	if r.URL.Path == "/api/settings" {
+		limit = 256 << 10
+	}
+	if r.ContentLength > limit {
 		return errors.New("request too large")
 	}
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 16385))
+	decoder := json.NewDecoder(io.LimitReader(r.Body, limit+1))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(v); err != nil {
 		return err
@@ -73,6 +95,7 @@ func fail(w http.ResponseWriter, err error) {
 }
 func New(c Config) http.Handler {
 	login := newLoginManager(c.Accounts)
+	csrf := newCSRFGuard()
 	prefix := c.Prefix
 	if prefix == "" {
 		prefix = "/app/fnmusic-go"
@@ -85,7 +108,26 @@ func New(c Config) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			if r.Header.Get("X-Trim-Isadmin") != "true" {
-				http.Error(w, "administrator login required", http.StatusForbidden)
+				respond(w, 403, map[string]string{"code": "admin_required", "error": "当前操作需要飞牛管理员权限，请确认登录身份。"})
+				return
+			}
+			if csrf.err != nil {
+				respond(w, 503, map[string]string{"error": "写入校验服务初始化失败，请重启应用。"})
+				return
+			}
+			if r.URL.Path == "/api/csrf" {
+				if r.Method != "GET" {
+					http.Error(w, "method not allowed", 405)
+					return
+				}
+				respond(w, 200, map[string]string{"token": csrf.token(r.Header.Get("X-Trim-Userid"))})
+				return
+			}
+			r = csrf.authorize(r)
+			if handleUsers(w, r, c) {
+				return
+			}
+			if handleMusic(w, r, c) {
 				return
 			}
 			// Route account subresources before the generic DELETE account handler.
@@ -93,6 +135,15 @@ func New(c Config) http.Handler {
 				return
 			}
 			switch {
+			case r.URL.Path == "/api/ready" && r.Method == http.MethodGet:
+				snapshot := takeover.Inspect(c.Socket)
+				target, _ := snapshot["target_state"].(map[string]any)
+				upstream, _ := snapshot["upstream_state"].(map[string]any)
+				if snapshot["journal"] != true || target["pid"] != os.Getpid() || upstream["connected"] != true {
+					http.Error(w, "socket proxy is not ready", http.StatusServiceUnavailable)
+					return
+				}
+				respond(w, 200, map[string]any{"ok": true})
 			case r.URL.Path == "/api/status" && r.Method == http.MethodGet:
 				enabled, mode, selected, amount := false, "isolated", "", 0
 				if c.Accounts != nil {
@@ -105,7 +156,7 @@ func New(c Config) http.Handler {
 					selected = snap.SharedAccount
 					amount = len(snap.Accounts)
 				}
-				respond(w, 200, map[string]any{"version": "0.5.0-preview", "phase": "go-native-eapi-preview", "source_enabled": enabled, "netease_mode": mode, "shared_account": selected, "accounts_count": amount, "socket": takeover.Inspect(c.Socket), "checked_at": time.Now().UTC().Format(time.RFC3339)})
+				respond(w, 200, map[string]any{"version": buildinfo.Version, "phase": "go-native-eapi-preview", "source_enabled": enabled, "netease_mode": mode, "shared_account": selected, "accounts_count": amount, "socket": takeover.Inspect(c.Socket), "checked_at": time.Now().UTC().Format(time.RFC3339)})
 			case r.URL.Path == "/api/accounts" && r.Method == http.MethodGet:
 				if c.Accounts == nil {
 					respond(w, 200, accounts.Config{Isolation: true})
@@ -114,7 +165,7 @@ func New(c Config) http.Handler {
 				respond(w, 200, c.Accounts.Snapshot())
 			case r.Method == http.MethodPost && r.URL.Path == "/api/accounts":
 				if !managementRequest(r) {
-					http.Error(w, "JSON management request required", 403)
+					rejectManagement(w)
 					return
 				}
 				if c.Accounts == nil {
@@ -133,7 +184,7 @@ func New(c Config) http.Handler {
 				respond(w, 201, map[string]any{"ok": true})
 			case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/accounts/"):
 				if !managementRequest(r) {
-					http.Error(w, "JSON management request required", 403)
+					rejectManagement(w)
 					return
 				}
 				if c.Accounts == nil {
@@ -148,7 +199,7 @@ func New(c Config) http.Handler {
 				respond(w, 200, map[string]any{"ok": true})
 			case r.Method == http.MethodPut && r.URL.Path == "/api/accounts/mode":
 				if !managementRequest(r) {
-					http.Error(w, "JSON management request required", 403)
+					rejectManagement(w)
 					return
 				}
 				if c.Accounts == nil {
@@ -169,7 +220,7 @@ func New(c Config) http.Handler {
 				respond(w, 200, map[string]any{"ok": true})
 			case r.Method == http.MethodPut && r.URL.Path == "/api/accounts/shared":
 				if !managementRequest(r) {
-					http.Error(w, "JSON management request required", 403)
+					rejectManagement(w)
 					return
 				}
 				if c.Accounts == nil {
@@ -190,7 +241,7 @@ func New(c Config) http.Handler {
 				respond(w, 200, map[string]any{"ok": true})
 			case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/accounts/bindings/"):
 				if !managementRequest(r) {
-					http.Error(w, "JSON management request required", 403)
+					rejectManagement(w)
 					return
 				}
 				if c.Accounts == nil {
@@ -262,13 +313,13 @@ func handleMusicboxSubresource(w http.ResponseWriter, r *http.Request, l *loginM
 		result, err = l.status(ctx, accountID)
 	case len(bits) == 3 && bits[1] == "auth" && bits[2] == "qr" && r.Method == http.MethodPost:
 		if !managementRequest(r) {
-			http.Error(w, "JSON management request required", 403)
+			rejectManagement(w)
 			return true
 		}
 		result, err = l.begin(ctx, accountID)
 	case len(bits) == 3 && bits[1] == "auth" && bits[2] == "check" && r.Method == http.MethodPost:
 		if !managementRequest(r) {
-			http.Error(w, "JSON management request required", 403)
+			rejectManagement(w)
 			return true
 		}
 		result, err = l.poll(ctx, accountID)
@@ -280,6 +331,11 @@ func handleMusicboxSubresource(w http.ResponseWriter, r *http.Request, l *loginM
 		return false
 	}
 	if err != nil {
+		var qrError *netease.QRStateError
+		if errors.As(err, &qrError) {
+			respond(w, 502, map[string]any{"code": "qr_state_unexpected", "upstream_code": qrError.Code})
+			return true
+		}
 		switch {
 		case errors.Is(err, accounts.ErrNotFound):
 			status = 404

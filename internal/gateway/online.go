@@ -3,8 +3,8 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"github.com/chenpingonline/fnos-music-ext/internal/diagnostics"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/chenpingonline/fnos-music-ext/internal/fnmusic"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
+	"github.com/chenpingonline/fnos-music-ext/internal/userdir"
 )
 
 const maxOfficialSearchBody = 6 << 20
@@ -31,6 +32,11 @@ func (g *Gateway) sourceFor(user provider.User) (provider.Adapter, string, bool)
 		return nil, "", false
 	}
 	if g.accounts != nil {
+		if resolver, ok := g.accounts.(interface {
+			ResolveUser(provider.User) (provider.Adapter, string, bool)
+		}); ok {
+			return resolver.ResolveUser(user)
+		}
 		if scoped, ok := g.accounts.(interface {
 			ResolveScoped(string) (provider.Adapter, string, bool)
 		}); ok {
@@ -50,6 +56,16 @@ func (g *Gateway) SetOnline(source provider.Adapter, ownerGUID string) {
 	}
 	g.online = source
 	g.ownerGUID = ownerGUID
+	g.listMu.Lock()
+	g.listEpoch++
+	g.lists = nil
+	g.listMu.Unlock()
+	g.searchMu.Lock()
+	g.searches = nil
+	g.searchMu.Unlock()
+	g.recoMu.Lock()
+	g.recommendations = nil
+	g.recoMu.Unlock()
 }
 
 type cachedTrack struct {
@@ -86,7 +102,21 @@ func (c *trackCache) get(id string) (provider.Track, bool) {
 	return provider.Track{}, false
 }
 
+type identityContextKey struct{}
+type requestIdentity struct {
+	once sync.Once
+	user provider.User
+	ok   bool
+}
+
 func (g *Gateway) identify(ctx context.Context, r *http.Request) (provider.User, bool) {
+	if memo, ok := ctx.Value(identityContextKey{}).(*requestIdentity); ok {
+		memo.once.Do(func() { memo.user, memo.ok = g.loadIdentity(ctx, r) })
+		return memo.user, memo.ok
+	}
+	return g.loadIdentity(ctx, r)
+}
+func (g *Gateway) loadIdentity(ctx context.Context, r *http.Request) (provider.User, bool) {
 	req, e := http.NewRequestWithContext(ctx, http.MethodGet, "http://trim-music/music/api/v1/user/me", nil)
 	if e != nil {
 		return provider.User{}, false
@@ -109,11 +139,28 @@ func (g *Gateway) identify(ctx context.Context, r *http.Request) (provider.User,
 	var data struct {
 		Code int `json:"code"`
 		Data struct {
-			GUID string `json:"guid"`
+			GUID     string `json:"guid"`
+			Username string `json:"username"`
+			UserName string `json:"userName"`
 		} `json:"data"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 32<<10)).Decode(&data) != nil || data.Code != 0 {
 		return provider.User{}, false
+	}
+	name := data.Data.Username
+	if name == "" {
+		name = data.Data.UserName
+	}
+	if name != "" {
+		if local, ok := userdir.Lookup(name); ok {
+			if observer, ok := g.accounts.(interface {
+				ObserveMusicIdentity(string, string, string) error
+			}); ok {
+				if err := observer.ObserveMusicIdentity(data.Data.GUID, local.Username, local.UID); err != nil {
+					return provider.User{}, false
+				}
+			}
+		}
 	}
 	user := provider.User{FnOSGUID: data.Data.GUID, Verified: true}
 	return user, user.Validate() == nil
@@ -137,6 +184,12 @@ func onlineGUID(r *http.Request) (string, string, bool) {
 	return id, strings.TrimPrefix(guid, "track_"), ok
 }
 func (g *Gateway) serveOnline(w http.ResponseWriter, r *http.Request) bool {
+	if g.playbackRoute(w, r) {
+		return true
+	}
+	if g.downloadRoute(w, r) || g.collectionRoute(w, r) {
+		return true
+	}
 	if g.playlistRoute(w, r) {
 		return true
 	}
@@ -171,6 +224,9 @@ func (g *Gateway) serveOnline(w http.ResponseWriter, r *http.Request) bool {
 	case (path == "/music/api/v1/track/lyrics" || strings.HasPrefix(path, "/music/api/v1/track/lyrics/") || strings.HasPrefix(path, "/music/api/v1/detail/lyrics/")) && r.Method == http.MethodGet:
 		return g.onlineSong(w, r, "lyrics")
 	case (path == "/music/api/v1/static/cover" || strings.HasPrefix(path, "/music/api/v1/static/cover/")) && (r.Method == http.MethodGet || r.Method == http.MethodHead):
+		if g.playlistCover(w, r) {
+			return true
+		}
 		return g.onlineSong(w, r, "cover")
 	}
 	return false
@@ -263,11 +319,11 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 		if fetchLimit == 0 {
 			fetchLimit = 1
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		result, e := source.Search(ctx, user, provider.SearchRequest{Keyword: keyword, Offset: onlineStart, Limit: fetchLimit})
+		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(g.policy().SearchTimeout)*time.Second)
+		result, e := g.searchWindow(ctx, user, source, accountID, keyword, onlineStart, fetchLimit)
 		cancel()
 		if e != nil {
-			log.Printf("fnmusic-go: music source search unavailable: %T", e)
+			diagnostics.Record("search", accountID, e)
 			writeOfficial(w, resp, b)
 			return true
 		}
@@ -293,7 +349,7 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 				continue
 			}
 			seen[key] = true
-			vo, valid := fnmusic.TrackVO(t, true)
+			vo, valid := g.trackVO(user, accountID, t, true)
 			if !valid {
 				continue
 			}
@@ -375,10 +431,18 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 			http.Error(w, "online metadata unavailable", http.StatusBadGateway)
 			return true
 		}
+		track = g.resolvePlaybackMetadata(ctx, user, source, accountID, track)
 		payload, ok := fnmusic.Metadata(track)
 		if !ok {
 			http.Error(w, "invalid online track", http.StatusBadGateway)
 			return true
+		}
+		if data, ok := payload["data"].(map[string]any); ok {
+			_, favorite := g.favorite(user, accountID, id)
+			data["isFavorite"] = favorite
+			if nested, ok := data["track"].(map[string]any); ok {
+				nested["isFavorite"] = favorite
+			}
 		}
 		writeJSON(w, 200, payload)
 	case "lyrics", "lyric-list":
@@ -389,13 +453,20 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 		}
 		writeJSON(w, 200, fnmusic.Lyrics(guid, lyric, action == "lyric-list"))
 	case "stream":
+		if g.media != nil {
+			if job, ok := g.media.Cached(user.FnOSGUID, accountID, id, g.policy().Quality); ok {
+				g.serveJob(w, r, job, false)
+				return true
+			}
+		}
+		g.cachePlayback(r, user, accountID, source, id)
 		rangeVal := r.Header.Get("Range")
 		if r.Method == http.MethodHead {
 			rangeVal = "__HEAD__"
 		}
 		// Audio must use request context rather than a 12s timeout; playback continues
 		// while the client is connected and is cancelled on disconnect.
-		stream, e := source.Play(r.Context(), user, provider.PlaybackRequest{TrackID: id, Quality: "exhigh", Range: rangeVal})
+		stream, e := playQuality(r.Context(), source, user, id, g.policy().Quality, rangeVal)
 		if e != nil {
 			http.Error(w, "online audio unavailable or not entitled", http.StatusBadGateway)
 			return true
@@ -416,6 +487,12 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 			_, _ = io.Copy(w, stream.Body)
 		}
 	case "cover":
+		size, sizeErr := requestedCoverSize(r)
+		if sizeErr != nil {
+			http.Error(w, "invalid cover size", 400)
+			return true
+		}
+
 		imgSource, ok := source.(interface {
 			OpenCover(context.Context, provider.User, string) (provider.Stream, error)
 		})
@@ -423,13 +500,56 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 			http.Error(w, "cover adapter unavailable", 502)
 			return true
 		}
-		img, e := imgSource.OpenCover(ctx, user, id)
+		fetchCover := func(fetchCtx context.Context) (provider.Stream, error) {
+			ctx := fetchCtx
+			var img provider.Stream
+			var e error
+			usedCached := false
+			if cached, found := g.cache.get(accountID + ":" + id); found && cached.CoverURL != "" {
+				if opener, supports := source.(interface {
+					OpenTrackCover(context.Context, provider.User, provider.Track) (provider.Stream, error)
+				}); supports {
+					// Never accept image URLs from the request. This metadata belongs
+					// to the authenticated user's currently selected source scope.
+					usedCached = true
+					cachedCtx, cancelCached := context.WithTimeout(ctx, 5*time.Second)
+					if sized, supports := source.(interface {
+						OpenTrackCoverSized(context.Context, provider.User, provider.Track, int) (provider.Stream, error)
+					}); supports {
+						img, e = sized.OpenTrackCoverSized(cachedCtx, user, cached, size)
+					} else {
+						img, e = opener.OpenTrackCover(cachedCtx, user, cached)
+					}
+					cancelCached()
+				}
+			}
+			if !usedCached || e != nil {
+				if sized, supports := source.(interface {
+					OpenCoverSized(context.Context, provider.User, string, int) (provider.Stream, error)
+				}); supports {
+					img, e = sized.OpenCoverSized(ctx, user, id, size)
+				} else {
+					img, e = imgSource.OpenCover(ctx, user, id)
+				}
+			}
+			return img, e
+		}
+		var img provider.Stream
+		var e error
+		if g.media != nil {
+			img, e = g.media.Cover(ctx, coverVariantKey(user.FnOSGUID+"\x00"+accountID+"\x00track:"+guid, size), fetchCover)
+		} else {
+			img, e = fetchCover(ctx)
+		}
 		if e != nil {
+			diagnostics.Record("track-cover", accountID+":"+id, e)
+			w.Header().Set("X-FnMusic-Cover-Error", diagnostics.Code(e))
 			http.Error(w, "cover unavailable", 502)
 			return true
 		}
 		defer img.Body.Close()
 		w.Header().Set("Content-Type", img.ContentType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "private, max-age=300")
 		w.Header().Set("Content-Length", strconv.FormatInt(img.ContentLength, 10))
 		w.WriteHeader(200)

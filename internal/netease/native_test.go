@@ -71,11 +71,22 @@ func TestNativeProviderFunctionalAndPerAccountSession(t *testing.T) {
 			w.WriteHeader(200)
 			return
 		}
-		path, args := unpackEAPI(t, r)
-		if path == "/api/login/qrcode/client/login" {
-			if args["key"] != "fake-key" {
-				t.Errorf("wrong QR key: %v", args)
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/weapi/") {
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
 			}
+			if len(r.PostForm.Get("encSecKey")) != 256 || r.PostForm.Get("params") == "" {
+				t.Error("missing WEAPI encryption")
+			}
+			if _, err := r.Cookie("deviceId"); err != nil {
+				t.Error("missing device context")
+			}
+			path = strings.Replace(path, "/weapi/", "/api/", 1)
+		} else {
+			path, _ = unpackEAPI(t, r)
+		}
+		if path == "/api/login/qrcode/client/login" {
 			_, _ = io.WriteString(w, `{"code":803,"cookie":"MUSIC_U=test-private-session; __csrf=token"}`)
 			return
 		}
@@ -197,5 +208,52 @@ func TestNativeNoRedirectAndURLParsing(t *testing.T) {
 	}
 	if normalizeCookies("MUSIC_U=one; Path=/; HttpOnly; __csrf=two") != "MUSIC_U=one; __csrf=two" {
 		t.Fatal("cookie normalization")
+	}
+}
+
+func TestNativeQRAuthorizationHeaderCookies(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		headers   bool
+		body      string
+		wantLogin bool
+	}{
+		{"native headers", true, `{"code":803}`, true},
+		{"bridge JSON", false, `{"code":803,"cookie":"MUSIC_U=test-session"}`, true},
+		{"confirmation without session", false, `{"code":803}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.headers {
+					http.SetCookie(w, &http.Cookie{Name: "MUSIC_U", Value: "test-session", Path: "/", HttpOnly: true})
+					http.SetCookie(w, &http.Cookie{Name: "__csrf", Value: "test-csrf", Path: "/"})
+					http.SetCookie(w, &http.Cookie{Name: "irrelevant", Value: "ignored", Path: "/"})
+				}
+				io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+			session := filepath.Join(t.TempDir(), "private", "session.json")
+			n, err := newNative("", session, srv.URL, srv.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err := n.CheckQRLogin(context.Background(), "test-key")
+			if tc.wantLogin {
+				if err != nil || !state.LoggedIn {
+					t.Fatalf("authorization failed: %v", err)
+				}
+				raw, err := os.ReadFile(session)
+				if err != nil || !strings.Contains(string(raw), "MUSIC_U=test-session") || strings.Contains(string(raw), "irrelevant") {
+					t.Fatal("session not saved correctly")
+				}
+			} else {
+				if err == nil || state.LoggedIn {
+					t.Fatal("accepted authorization without session")
+				}
+				if _, err := os.Stat(session); !os.IsNotExist(err) {
+					t.Fatal("unexpected session")
+				}
+			}
+		})
 	}
 }

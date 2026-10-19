@@ -54,18 +54,34 @@ func TrackVO(t provider.Track, markSource bool) (map[string]any, bool) {
 	artists := make([]map[string]any, 0, len(t.Artists))
 	for i, artist := range t.Artists {
 		if artist != "" {
-			artists = append(artists, map[string]any{"name": artist, "guid": fmt.Sprintf("%s:artist:%d", guid, i)})
+			artists = append(artists, map[string]any{"name": artist, "guid": fmt.Sprintf("%s:artist:%d", guid, i),
+				"coverId": nil, "createdAt": int64(0), "updatedAt": int64(0)})
 		}
 	}
-	album := map[string]any{"name": t.Album, "guid": guid + ":album", "artists": artists, "coverId": guid}
-	spec := map[string]any{"path": "online/netease/" + guid + ".mp3", "format": "mp3", "codec": "mp3", "container": "mp3", "duration": t.DurationMS, "size": 0, "channel": 2, "sampleRate": 44100, "bitrate": 320000}
+	album := map[string]any{"name": t.Album, "guid": guid + ":album", "artists": artists, "coverId": guid,
+		"createdAt": int64(0), "updatedAt": int64(0), "releaseDate": nil, "barcode": nil}
+	format, codec := "", ""
+	var size int64
+	if t.Audio != nil {
+		format, codec, size = t.Audio.Format, t.Audio.Codec, t.Audio.Size
+	}
+	path := "online/netease/" + guid
+	if format != "" {
+		path += "." + format
+	}
+	spec := map[string]any{"path": path, "format": format, "codec": codec, "container": format, "duration": t.DurationMS, "size": size, "channel": 0, "sampleRate": 0, "bitrate": 0}
 	artistName := strings.Join(t.Artists, " ")
+	// The official playlist client calls new Date(value * 1000).toISOString()
+	// without a fallback. Use Unix epoch for unknown source timestamps; omitted
+	// fields become NaN and abort conversion of the entire track list.
 	return map[string]any{
+		"createdAt": int64(0), "updatedAt": int64(0),
+		"year": nil, "discNo": nil, "trackNo": nil, "isrc": "",
 		"guid": guid, "id": guid, "title": title, "name": title, "artist": artistName, "artists": artists, "album": album, "albumName": t.Album,
 		"audioSpec": spec, "duration": t.DurationMS, "duration_ms": t.DurationMS, "durationMs": t.DurationMS, "duration_s": float64(t.DurationMS) / 1000,
-		"codec": "mp3", "codecName": "mp3", "format": "mp3", "ext": "mp3", "size": 0, "file_size": 0,
+		"codec": codec, "codecName": codec, "format": format, "ext": format, "size": size, "file_size": size,
 		"coverId": guid, "cover_url": t.CoverURL, "coverUrl": t.CoverURL, "coverURL": t.CoverURL, "source": "netease", "is_online": true,
-		"isFavorite": false, "isCue": false, "hasLyric": true, "genres": []any{}, "accessStatus": 0,
+		"isFavorite": false, "isCue": false, "hasLyric": true, "genres": []any{}, "accessStatus": t.AccessStatus,
 	}, true
 }
 func Metadata(t provider.Track) (map[string]any, bool) {

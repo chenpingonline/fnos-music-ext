@@ -21,8 +21,8 @@
 ## 1. 为什么两条 Socket
 
 - 官方 Socket 只提供**原生业务透传**与本扩展本地 health/livez，不提供音源配置或宿主机文件读取。
-- 管理 Socket 单独监听在 FPK `target/` 目录，仅允许指定网关 UID 通过 `SO_PEERCRED`；API 另检查 `X-Trim-Isadmin`。但在未证实网关如何剥离/注入身份头前，**只开放只读 API**。以后任何状态修改都必须经过更可靠的 fnOS 用户身份验证。
-- 正式部署需要用 `ps` / `/proc` 确认 fnOS 网关工作进程 UID，再设定 `--gateway-uid`。默认 0 是**保守拒绝**而不是假定飞牛网关必为 root。
+- 管理 Socket 单独监听在 FPK `target/` 目录，使用 `SO_PEERCRED` 核对同伴身份：允许 root，或运行 root 所有且不可被组/其他用户写入的 nginx 程序、父进程为同一程序的 root 主进程的工作进程。API 另检查官方网关 `X-Trim-Isadmin`；写操作还需要 JSON 与自定义管理 Header，并校验 Origin。
+- 默认自动识别网关进程，不固定 UID。特殊部署可以在确认实际网关 UID 后配置 `--gateway-uid`。非 nginx 网关默认拒绝，需实机确认。
 
 ## 2. Socket 接管状态机
 

@@ -1,13 +1,29 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SELF_DIR}/_common"
 case "${1:-}" in
-  start) systemctl start "${UNIT}" ;;
-  stop)
-    systemctl stop "${UNIT}"
-    [ ! -f /run/fnmusic-go/ownership.json ] || { echo '官方 Socket 恢复未验证；已保留状态供排查' >&2; exit 1; }
+  start)
+    require_binary
+    require_own_unit
+    [[ -f "$SERVICE_FILE" ]] || fail '缺少服务配置，请重新安装应用。'
+    prepare_data
+    [[ -S /var/run/trim_music.socket ]] || fail '请先启动官方飞牛音乐。'
+    if ! start_error="$(systemctl start "$UNIT" 2>&1)"; then
+      service_failure '启动音乐扩展服务失败' "$start_error"
+    fi
+    for attempt in {1..30}; do
+      if "$BINARY" health --admin-socket "$ADMIN_SOCK" >/dev/null 2>&1; then exit 0; fi
+      if ! service_state; then break; fi
+      sleep 0.2
+    done
+    stop_service
+    fail '服务启动后未就绪，已停止服务并恢复官方 Socket；请查看 journalctl -u fnmusic-go。'
     ;;
-  status) service_state && exit 0 || exit 3 ;;
-  *) echo 'usage: main start|stop|status' >&2; exit 1 ;;
+  stop) stop_service ;;
+  status)
+    if service_state && "$BINARY" health --admin-socket "$ADMIN_SOCK" >/dev/null 2>&1; then exit 0; fi
+    exit 3
+    ;;
+  *) fail '不支持的操作，请使用 start、stop 或 status。' ;;
 esac

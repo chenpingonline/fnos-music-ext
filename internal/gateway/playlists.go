@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"github.com/chenpingonline/fnos-music-ext/internal/diagnostics"
 	"io"
 	"net/http"
 	"strconv"
@@ -19,9 +20,12 @@ func (g *Gateway) playlistRoute(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet {
 		return false
 	}
-	switch r.URL.Path {
-	case playlistBase + "playlist/list":
+	if r.URL.Path == playlistBase+"playlist/list" || strings.HasPrefix(r.URL.Path, playlistBase+"playlist/list/") {
 		return g.playlistList(w, r)
+	}
+	switch r.URL.Path {
+	case playlistBase + "playlist/batch-detail":
+		return g.playlistBatchDetail(w, r)
 	case playlistBase + "playlist/detail":
 		return g.playlistDetail(w, r)
 	case playlistBase + "track/playlist-detail/list":
@@ -53,7 +57,7 @@ func hasPlaylist(lists []provider.Playlist, id string) (provider.Playlist, bool)
 func playlistGUID(r *http.Request) string {
 	for _, key := range []string{"playlistGUID", "playlistGuid", "guid"} {
 		if x := r.URL.Query().Get(key); x != "" {
-			return x
+			return strings.TrimPrefix(strings.TrimSpace(x), "track_")
 		}
 	}
 	return ""
@@ -95,12 +99,18 @@ func (g *Gateway) playlistList(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	var data map[string]json.RawMessage
-	if json.Unmarshal(envelope["data"], &data) != nil {
+	if len(envelope["data"]) > 0 && json.Unmarshal(envelope["data"], &data) != nil {
 		writeOfficial(w, resp, body)
 		return true
 	}
+	if data == nil {
+		data = make(map[string]json.RawMessage)
+	}
 	var existing []json.RawMessage
-	if json.Unmarshal(data["list"], &existing) != nil {
+	// Empty libraries may omit list or use null, as handled by the upstream
+	// extension. Preserve malformed non-empty payloads instead of replacing them.
+	rawList := data["list"]
+	if len(rawList) > 0 && json.Unmarshal(rawList, &existing) != nil {
 		writeOfficial(w, resp, body)
 		return true
 	}
@@ -108,14 +118,14 @@ func (g *Gateway) playlistList(w http.ResponseWriter, r *http.Request) bool {
 	if json.Unmarshal(data["total"], &oldTotal) != nil || oldTotal < 0 {
 		oldTotal = len(existing)
 	}
-	playlists, err := g.ownedList(r.Context(), user, src)
+	playlists, err := g.availableLists(r.Context(), user, src, scope)
 	if err != nil || len(playlists) == 0 {
 		writeOfficial(w, resp, body)
 		return true
 	}
 	cards := make([]json.RawMessage, 0, len(playlists))
 	for _, p := range playlists {
-		if v, ok := fnmusic.PlaylistVO(scope, p); ok {
+		if v, ok := fnmusic.PlaylistVO(cardScope(scope, p), p); ok {
 			raw, _ := json.Marshal(v)
 			cards = append(cards, raw)
 		}
@@ -135,21 +145,31 @@ func (g *Gateway) playlistDetail(w http.ResponseWriter, r *http.Request) bool {
 	if !ok {
 		return false
 	}
-	id, ok := fnmusic.DecodePlaylistID(scope, playlistGUID(r))
+	id, kind, ok := decodeList(scope, playlistGUID(r))
 	if !ok {
 		return false
 	}
-	lists, err := g.ownedList(r.Context(), user, src)
+	lists, err := g.availableLists(r.Context(), user, src, scope)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"code": -1, "msg": "playlist source unavailable"})
 		return true
 	}
-	p, found := hasPlaylist(lists, id)
+	p, found := hasTypedPlaylist(lists, id, kind)
 	if !found {
 		writeJSON(w, 404, map[string]any{"code": -1, "msg": "playlist not found"})
 		return true
 	}
-	card, _ := fnmusic.PlaylistVO(scope, p)
+	if p.TrackCount == 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+		count, loadErr := g.listTrackCount(ctx, user, src, scope, p)
+		cancel()
+		if loadErr != nil {
+			writeJSON(w, 502, map[string]any{"code": -1, "msg": "playlist tracks unavailable"})
+			return true
+		}
+		p.TrackCount = count
+	}
+	card, _ := fnmusic.PlaylistVO(cardScope(scope, p), p)
 	writeJSON(w, 200, map[string]any{"code": 0, "msg": "ok", "data": card})
 	return true
 }
@@ -158,64 +178,87 @@ func (g *Gateway) playlistTracks(w http.ResponseWriter, r *http.Request) bool {
 	if !ok {
 		return false
 	}
-	id, ok := fnmusic.DecodePlaylistID(scope, playlistGUID(r))
+	id, kind, ok := decodeList(scope, playlistGUID(r))
 	if !ok {
 		return false
 	}
-	lists, err := g.ownedList(r.Context(), user, src)
+	lists, err := g.availableLists(r.Context(), user, src, scope)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"code": -1, "msg": "playlist source unavailable"})
 		return true
 	}
-	if _, ok := hasPlaylist(lists, id); !ok {
+	p, found := hasTypedPlaylist(lists, id, kind)
+	if !found {
 		writeJSON(w, 404, map[string]any{"code": -1, "msg": "playlist not found"})
 		return true
 	}
-	bridge, ok := src.(interface {
-		PlaylistTracks(context.Context, provider.User, string) ([]provider.Track, error)
-	})
-	if !ok {
-		writeJSON(w, 501, map[string]any{"code": -1, "msg": "playlist tracks unsupported"})
-		return true
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-	defer cancel()
-	tracks, err := bridge.PlaylistTracks(ctx, user, id)
-	if err != nil {
-		writeJSON(w, 502, map[string]any{"code": -1, "msg": "playlist tracks unavailable"})
-		return true
-	}
+
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
 	}
-	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
-	if size == -1 {
-		size = len(tracks)
-	} else if size < 1 {
-		size = 50
-	}
-	if size > 1000 {
-		size = 1000
-	}
 	if page > 10000 {
 		page = 10000
 	}
-	start := (page - 1) * size
-	end := start + size
-	if start > len(tracks) {
-		start = len(tracks)
+	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	all := size == -1
+	if !all && size < 1 {
+		size = 50
 	}
-	if end > len(tracks) {
-		end = len(tracks)
+	if !all && size > 1000 {
+		size = 1000
 	}
-	rows := make([]map[string]any, 0, end-start)
-	for _, t := range tracks[start:end] {
-		if v, ok := fnmusic.TrackVO(t, false); ok {
+	offset := 0
+	if !all {
+		offset = (page - 1) * size
+	}
+	timeout := 20 * time.Second
+	if all {
+		timeout = 60 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	result, paged, err := g.listTrackPage(ctx, user, src, scope, p, offset, size)
+	var tracks []provider.Track
+	total := result.Total
+	if paged {
+		tracks = result.Tracks
+	} else {
+		tracks, err = g.listTracks(ctx, user, src, scope, p)
+		total = len(tracks)
+		if err == nil && !all {
+			start := offset
+			if start > len(tracks) {
+				start = len(tracks)
+			}
+			end := start + size
+			if end > len(tracks) {
+				end = len(tracks)
+			}
+			tracks = tracks[start:end]
+		}
+	}
+	if err != nil {
+		diagnostics.Record("playlist-tracks", scope+":"+id, err)
+		writeJSON(w, 502, map[string]any{"code": -1, "msg": "playlist tracks unavailable"})
+		return true
+	}
+	rows := make([]map[string]any, 0, len(tracks))
+	for _, t := range tracks {
+		if v, ok := g.trackVO(user, scope, t, false); ok {
 			rows = append(rows, v)
 			g.cache.put(scope+":"+t.ID, t)
 		}
 	}
-	writeJSON(w, 200, map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"list": rows, "total": len(tracks), "sort": strings.TrimSpace(r.URL.Query().Get("sort"))}})
+	writeJSON(w, 200, map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"list": rows, "total": total, "sort": strings.TrimSpace(r.URL.Query().Get("sort"))}})
 	return true
+}
+
+func hasTypedPlaylist(lists []provider.Playlist, id, kind string) (provider.Playlist, bool) {
+	for _, p := range lists {
+		if p.ID == id && p.Kind == kind {
+			return p, true
+		}
+	}
+	return provider.Playlist{}, false
 }

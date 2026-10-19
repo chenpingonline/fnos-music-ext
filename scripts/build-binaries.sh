@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-mkdir -p "${ROOT}/dist/linux-amd64" "${ROOT}/dist/linux-arm64"
-cd "${ROOT}"
-for arch in amd64 arm64; do
-  echo "[build] linux/${arch}"
-  CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" go build -trimpath -ldflags '-s -w' -o "dist/linux-${arch}/fnmusic-go" ./cmd/fnmusic-go
+. "${ROOT}/scripts/version.sh"
+case "${1:-all}" in
+  all) architectures=(amd64 arm64) ;;
+  x86) architectures=(amd64) ;;
+  arm) architectures=(arm64) ;;
+  *) echo 'usage: build-binaries.sh [all|x86|arm]' >&2; exit 1 ;;
+esac
+cd "$ROOT"
+npm ci --prefix web
+npm run build --prefix web
+for arch in "${architectures[@]}"; do
+  mkdir -p "dist/linux-${arch}"
+  echo "[build] linux/${arch} ${VERSION}"
+  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" GOAMD64=v1 go build -trimpath -ldflags "$BUILD_FLAGS" -o "dist/linux-${arch}/fnmusic-go" ./cmd/fnmusic-go
 done
-sha256sum dist/linux-amd64/fnmusic-go dist/linux-arm64/fnmusic-go > dist/SHA256SUMS
+python3 - "${architectures[@]}" <<'PY'
+import hashlib,sys
+from pathlib import Path
+files=[Path(f'dist/linux-{arch}/fnmusic-go') for arch in sys.argv[1:]]
+Path('dist/SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p}\n' for p in files))
+PY

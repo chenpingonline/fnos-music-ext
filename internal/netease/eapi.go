@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // eapiForm encodes the EAPI wire format using only Go standard-library cryptography.
@@ -69,4 +72,29 @@ func decodeEAPIResponse(body []byte) ([]byte, error) {
 		return nil, errors.New("invalid EAPI JSON")
 	}
 	return plain, nil
+}
+
+// Match the EAPI profile used by MusicBox; this does not alter entitlement.
+const eapiUserAgent = "NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)"
+
+func eapiHeader(cookie, deviceID string) map[string]any {
+	now := time.Now()
+	header := map[string]any{
+		"os": "iphone", "appver": "9.0.90", "osver": "16.2", "channel": "distribution",
+		"deviceId": deviceID, "versioncode": "140", "mobilename": "", "resolution": "1920x1080",
+		"buildver": strconv.FormatInt(now.Unix(), 10), "__csrf": "",
+		"requestId": fmt.Sprintf("%d_%04d", now.UnixMilli(), now.UnixNano()%10000),
+	}
+	r := &http.Request{Header: make(http.Header)}
+	r.Header.Set("Cookie", cookie)
+	for _, c := range r.Cookies() {
+		switch c.Name {
+		case "MUSIC_U", "MUSIC_A", "NMTID", "__csrf":
+			header[c.Name] = c.Value
+		}
+	}
+	if header["MUSIC_U"] != nil {
+		delete(header, "MUSIC_A")
+	}
+	return header
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/chenpingonline/fnos-music-ext/internal/netease"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
+	"github.com/chenpingonline/fnos-music-ext/internal/userdir"
 )
 
 var (
@@ -37,10 +38,13 @@ type Account struct {
 	CacheToken string `json:"cache_token,omitempty"`
 }
 type Config struct {
-	Isolation     bool              `json:"isolation"`
-	SharedAccount string            `json:"shared_account"`
-	Accounts      []Account         `json:"accounts"`
-	Bindings      map[string]string `json:"bindings"` // fnOS GUID -> account ID
+	UserBindingUIDs map[string]string   `json:"user_binding_uids"`
+	UserBindings    map[string]string   `json:"user_bindings"`
+	Identities      map[string]Identity `json:"user_identities"`
+	Isolation       bool                `json:"isolation"`
+	SharedAccount   string              `json:"shared_account"`
+	Accounts        []Account           `json:"accounts"`
+	Bindings        map[string]string   `json:"bindings"` // fnOS GUID -> account ID
 }
 type Snapshot struct {
 	Config
@@ -50,11 +54,12 @@ type Snapshot struct {
 // Builder permits test-specific adapters and validates the backend configuration.
 type Builder func(url string) (provider.Adapter, error)
 type Manager struct {
-	mu       sync.RWMutex
-	path     string
-	config   Config
-	adapters map[string]provider.Adapter
-	build    Builder
+	lookupUser func(string) (userdir.User, bool)
+	mu         sync.RWMutex
+	path       string
+	config     Config
+	adapters   map[string]provider.Adapter
+	build      Builder
 }
 
 func defaultConfig() Config {
@@ -72,7 +77,7 @@ func New(path string, build Builder) (*Manager, error) {
 			return netease.NewBridge(u)
 		}
 	}
-	m := &Manager{path: path, build: build, config: defaultConfig(), adapters: map[string]provider.Adapter{}}
+	m := &Manager{lookupUser: userdir.Lookup, path: path, build: build, config: defaultConfig(), adapters: map[string]provider.Adapter{}}
 	if err := m.load(); err != nil {
 		return nil, err
 	}
@@ -172,10 +177,39 @@ func (m *Manager) validate(c Config) (map[string]provider.Adapter, error) {
 		}
 		boundAccount[account] = user
 	}
+	for name, account := range c.UserBindings {
+		if !userdir.ValidName(name) || adapters[account] == nil || c.UserBindingUIDs[name] == "" {
+			return nil, ErrInvalid
+		}
+		if previous := boundAccount[account]; previous != "" {
+			identity, ok := c.Identities[previous]
+			if !ok || identity.Username != name {
+				return nil, fmt.Errorf("%w: account already assigned to another user", ErrConflict)
+			}
+		}
+		boundAccount[account] = "username:" + name
+	}
+	for guid, identity := range c.Identities {
+		if !userPattern.MatchString(guid) || !userdir.ValidName(identity.Username) || identity.UID == "" {
+			return nil, ErrInvalid
+		}
+	}
 	return adapters, nil
 }
 func clone(c Config) Config {
 	copy := c
+	copy.UserBindingUIDs = make(map[string]string, len(c.UserBindingUIDs))
+	for k, v := range c.UserBindingUIDs {
+		copy.UserBindingUIDs[k] = v
+	}
+	copy.UserBindings = make(map[string]string, len(c.UserBindings))
+	for k, v := range c.UserBindings {
+		copy.UserBindings[k] = v
+	}
+	copy.Identities = make(map[string]Identity, len(c.Identities))
+	for k, v := range c.Identities {
+		copy.Identities[k] = v
+	}
 	copy.Accounts = append([]Account(nil), c.Accounts...)
 	copy.Bindings = make(map[string]string, len(c.Bindings))
 	for k, v := range c.Bindings {
@@ -326,6 +360,12 @@ func (m *Manager) Remove(id string) error {
 			return ErrNotFound
 		}
 		c.Accounts = out
+		for name, account := range c.UserBindings {
+			if account == id {
+				delete(c.UserBindings, name)
+				delete(c.UserBindingUIDs, name)
+			}
+		}
 		if c.SharedAccount == id {
 			c.SharedAccount = ""
 		}
