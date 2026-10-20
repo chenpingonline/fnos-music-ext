@@ -36,6 +36,13 @@ type Native struct {
 }
 
 func NewNative(address, directory string) (*Native, error) {
+	return nativeForAccount(address, directory, false)
+}
+
+// NewLoginDraft keeps authorization credentials only in memory until committed.
+func NewLoginDraft(address string) (*Native, error) { return nativeForAccount(address, "", true) }
+
+func nativeForAccount(address, directory string, transient bool) (*Native, error) {
 	u, err := url.Parse(address)
 	if err != nil {
 		return nil, err
@@ -47,7 +54,11 @@ func NewNative(address, directory string) (*Native, error) {
 	if !nativeAccountID(id) || strings.Contains(u.Path[1:], "/") {
 		return nil, errors.New("invalid native account ID")
 	}
-	return newNative(address, filepath.Join(directory, "netease-sessions", id+".json"), "https://interface.music.163.com", nil)
+	session := ""
+	if !transient {
+		session = filepath.Join(directory, "netease-sessions", id+".json")
+	}
+	return newNative(address, session, "https://interface.music.163.com", nil)
 }
 func nativeAccountID(id string) bool {
 	if len(id) < 1 || len(id) > 48 {
@@ -97,6 +108,9 @@ func (n *Native) Health(ctx context.Context) error {
 	return nil
 }
 func (n *Native) loadSession() error {
+	if n.session == "" {
+		return nil
+	}
 	st, e := os.Lstat(n.session)
 	if errors.Is(e, os.ErrNotExist) {
 		return nil
@@ -158,6 +172,13 @@ func normalizeCookies(s string) string {
 func (n *Native) persistCookie(cookie string) error {
 	if !validSessionCookie(cookie) {
 		return errors.New("NetEase did not provide a valid MUSIC_U login cookie")
+	}
+	if n.session == "" {
+		n.cookie = cookie
+		if n.webClient != nil {
+			n.seedWebCookies(cookie)
+		}
+		return nil
 	}
 	dir := filepath.Dir(n.session)
 	if e := os.MkdirAll(dir, 0700); e != nil {
@@ -581,4 +602,33 @@ func (n *Native) PlaylistTracks(ctx context.Context, u provider.User, id string)
 func (n *Native) playlistTracks(ctx context.Context, id string) ([]provider.Track, error) {
 	page, err := n.playlistTrackPage(ctx, id, 0, -1)
 	return page.Tracks, err
+}
+
+// CommitLogin persists an authenticated draft. Existing session files are never replaced.
+func (n *Native) CommitLogin(directory, id string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.session != "" || !nativeAccountID(id) {
+		return errors.New("invalid login draft")
+	}
+	path := filepath.Join(directory, "netease-sessions", id+".json")
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		return errors.New("login session already exists or is inaccessible")
+	}
+	n.session = path
+	if err := n.persistCookie(n.cookie); err != nil {
+		n.session = ""
+		return err
+	}
+	return nil
+}
+
+// RollbackLogin removes only the session just committed by this draft.
+func (n *Native) RollbackLogin() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.session != "" {
+		_ = os.Remove(n.session)
+		n.session = ""
+	}
 }

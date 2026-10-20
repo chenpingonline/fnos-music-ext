@@ -54,7 +54,8 @@ export function useAccountPanel() {
       }
     })
   }
-  function open(value: Account) { reset(); account.value = value; void checkStatus() }
+  function open(value: Account, login = false) { reset(); account.value = value; return login ? startLogin() : checkStatus() }
+  function openPlaylists(value: Account) { reset(); account.value = value; return loadPlaylists() }
   function close() { reset(); account.value = null }
   async function startLogin() {
     await run('qr', async (signal, current) => {
@@ -100,5 +101,5 @@ export function useAccountPanel() {
       if (current()) { playlist.value = value; tracks.value = result ?? []; page.value = 1 }
     })
   }
-  return {account, action, error, auth, qrImage, qrURL, expired, playlists, playlist, tracks, playlistsLoaded, page, retryAt, busy, visibleTracks, pageCount, statusText, open, close, startLogin, checkLogin, checkStatus, loadPlaylists, loadTracks}
+  return {account, action, error, auth, qrImage, qrURL, expired, playlists, playlist, tracks, playlistsLoaded, page, retryAt, busy, visibleTracks, pageCount, statusText, open, openPlaylists, close, startLogin, checkLogin, checkStatus, loadPlaylists, loadTracks}
 }

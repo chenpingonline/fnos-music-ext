@@ -95,6 +95,7 @@ func fail(w http.ResponseWriter, err error) {
 }
 func New(c Config) http.Handler {
 	login := newLoginManager(c.Accounts)
+	enrollments := newEnrollmentManager(c.Accounts)
 	csrf := newCSRFGuard()
 	prefix := c.Prefix
 	if prefix == "" {
@@ -124,6 +125,9 @@ func New(c Config) http.Handler {
 				return
 			}
 			r = csrf.authorize(r)
+			if enrollments.handle(w, r) {
+				return
+			}
 			if handleUsers(w, r, c) {
 				return
 			}

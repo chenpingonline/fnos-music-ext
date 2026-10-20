@@ -26,6 +26,7 @@ for platform in "${platforms[@]}"; do
   chmod +x "$STAGE/cmd/"*
   sed "s/@PLATFORM@/${platform}/" "${ROOT}/packaging/fpk/manifest.in" > "$STAGE/manifest"
   cp "${ROOT}/packaging/fpk/ICON.PNG" "${ROOT}/packaging/fpk/ICON_256.PNG" "${ROOT}/LICENSE" "$STAGE/"
+  cp "${ROOT}/THIRD_PARTY_NOTICES.md" "$STAGE/app/"
   echo "[stage] $STAGE"
   if ! "$STAGE_ONLY"; then
     (cd "$STAGE" && fnpack build)

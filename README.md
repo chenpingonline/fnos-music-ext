@@ -6,7 +6,7 @@
 
 本项目参考 [fnmusic-ext](https://github.com/javycoder/fnos_music_ext) 的功能设计与集成方式重新实现，网易云协议适配参考 [MusicBox](https://github.com/darknessomi/musicbox)。感谢原项目作者与贡献者。
 
-> 当前为开发预览版，真实 fnOS 安装、官方客户端与音源兼容性仍需设备验收。版本以 [`manifest.in`](packaging/fpk/manifest.in) 为准，近期变化见 [v0.5.19 发布说明](docs/V0_5_19_RELEASE_NOTES.md)。
+> 当前为开发预览版，真实 fnOS 安装、官方客户端与音源兼容性仍需设备验收。版本以 [`manifest.in`](packaging/fpk/manifest.in) 为准，近期变化见 [v0.5.22 发布说明](docs/V0_5_22_RELEASE_NOTES.md)。
 
 ## 主要功能
 
@@ -133,7 +133,7 @@ sudo ./dist/linux-amd64/fnmusic-go restore
 
 本项目采用 [MIT License](LICENSE)。代码许可证不包含音乐内容或平台 API 的使用授权；音频可用性取决于源站、歌曲资源和账号权益，本项目不绕过会员限制或 DRM。
 
-网易云接口可能随上游调整而失效。当前本地及模拟服务验证不能替代真实设备验收；播放 403 等兼容性修正仍需在 NAS 上复测，详见[发布说明](docs/V0_5_19_RELEASE_NOTES.md)。
+网易云接口可能随上游调整而失效。当前本地及模拟服务验证不能替代真实设备验收；播放 403 等兼容性修正仍需在 NAS 上复测，详见[发布说明](docs/V0_5_22_RELEASE_NOTES.md)。
 
 ## 历史开发阶段
 

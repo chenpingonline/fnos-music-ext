@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "preview:ui": "node scripts/preview-ui.mjs"
   },
   "dependencies": {
     "@trimjs/web-app": "^0.5.0",
+    "lucide-vue-next": "^0.577.0",
     "qrcode": "^1.5.4",
     "vue": "^3.5.0"
   },

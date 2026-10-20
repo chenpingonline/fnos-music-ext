@@ -73,3 +73,33 @@ test('status button checks an active QR challenge and closing cancels automatic 
   assert.equal(checks,1);assert.equal(panel.statusText.value,'已扫码，请在手机上确认')
   panel.close();t.mock.timers.tick(10000);await settle();assert.equal(checks,1)
 })
+
+
+test('a newly created account opens directly into QR login without a separate status step',async t=>{
+ const calls=[]
+ mockFetch(t,url=>{calls.push(url);return Promise.resolve(response({qr_url:'https://music.163.com/login?codekey=test-only'}))})
+ const panel=useAccountPanel();t.after(()=>panel.close())
+ await panel.open(account('new_account'),true)
+ assert.equal(calls.length,1);assert.match(calls[0],/new_account\/auth\/qr$/)
+ assert.match(panel.qrImage.value,/^data:image\/png;base64,/)
+ assert.equal(panel.statusText.value,'等待扫码')
+})
+
+
+test('playlist entry loads the selected account immediately without authentication requests',async t=>{
+ const calls=[]
+ mockFetch(t,url=>{calls.push(url);return Promise.resolve(response([{id:'owned',title:'Current account only',track_count:3}]))})
+ const panel=useAccountPanel();t.after(()=>panel.close())
+ await panel.openPlaylists(account('selected'))
+ assert.deepEqual(calls,['/app/fnmusic-go/api/accounts/selected/playlists'])
+ assert.equal(panel.playlistsLoaded.value,true);assert.equal(panel.playlists.value[0].title,'Current account only')
+})
+
+test('switching playlist accounts ignores the previous account late response',async t=>{
+ let finish
+ mockFetch(t,url=>url.includes('/first/')?new Promise(resolve=>finish=resolve):Promise.resolve(response([{id:'second-list',title:'Second account',track_count:2}])))
+ const panel=useAccountPanel();t.after(()=>panel.close())
+ const first=panel.openPlaylists(account('first'));await panel.openPlaylists(account('second'))
+ finish(response([{id:'first-list',title:'First account',track_count:1}]));await first
+ assert.equal(panel.account.value.id,'second');assert.equal(panel.playlists.value.length,1);assert.equal(panel.playlists.value[0].id,'second-list')
+})
