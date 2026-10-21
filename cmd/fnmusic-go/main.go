@@ -21,7 +21,6 @@ import (
 	"github.com/chenpingonline/fnos-music-ext/internal/admin"
 	"github.com/chenpingonline/fnos-music-ext/internal/buildinfo"
 	"github.com/chenpingonline/fnos-music-ext/internal/gateway"
-	"github.com/chenpingonline/fnos-music-ext/internal/netease"
 	"github.com/chenpingonline/fnos-music-ext/internal/preferences"
 	"github.com/chenpingonline/fnos-music-ext/internal/takeover"
 )
@@ -47,13 +46,11 @@ func run(args []string) error {
 	officialExe := f.String("official-exe", "trim-music", "trusted official process executable name")
 	adminSocket := f.String("admin-socket", "", "fnOS desktop gateway socket (serve only)")
 	gatewayUID := f.Int("gateway-uid", -1, "trusted gateway UID override; default verifies nginx worker and root master")
-	musicboxURL := f.String("netease-url", os.Getenv("FNMUSIC_GO_NETEASE_URL"), "loopback MusicBox REST API URL; optional")
 	dataDir := os.Getenv("TRIM_PKGVAR")
 	if dataDir == "" {
 		dataDir = "/var/apps/fnmusic-go/var"
 	}
 	accountsFile := f.String("account-state", filepath.Join(dataDir, "accounts.json"), "private JSON account configuration (0600)")
-	neteaseUser := f.String("netease-user-guid", os.Getenv("FNMUSIC_GO_NETEASE_USER_GUID"), "verified fnOS user GUID permitted to use the MusicBox instance; required to enable")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -75,12 +72,12 @@ func run(args []string) error {
 	case "health":
 		return adminHealth(*adminSocket)
 	case "serve":
-		return serve(cfg, *adminSocket, *gatewayUID, *accountsFile, *musicboxURL, *neteaseUser)
+		return serve(cfg, *adminSocket, *gatewayUID, *accountsFile)
 	default:
 		return fmt.Errorf("unknown command %s", strconv.Quote(args[0]))
 	}
 }
-func serve(cfg takeover.Config, adminPath string, trustedUID int, accountsFile, bridgeURL, ownerGUID string) error {
+func serve(cfg takeover.Config, adminPath string, trustedUID int, accountsFile string) error {
 	if adminPath == "" {
 		return errors.New("--admin-socket must be provided, expected within app target directory")
 	}
@@ -104,30 +101,9 @@ func serve(cfg takeover.Config, adminPath string, trustedUID int, accountsFile, 
 	// The public official socket must retain the same accessibility as the original one;
 	// socket mode is promoted after the official socket has been safely staged.
 	gw := gateway.New(cfg.Upstream)
-	// Persisted account registry replaces the old single-owner MusicBox flag.
-	_, stateStatErr := os.Stat(accountsFile)
-	if stateStatErr != nil && !errors.Is(stateStatErr, os.ErrNotExist) {
-		return stateStatErr
-	}
-	freshState := errors.Is(stateStatErr, os.ErrNotExist)
 	manager, err := accounts.New(accountsFile, nil)
 	if err != nil {
 		return fmt.Errorf("music account settings: %w", err)
-	}
-	// One-time migration only on a fresh registry; never overwrite user choices.
-	if freshState && !manager.IsConfigured() && (bridgeURL != "" || ownerGUID != "") {
-		if bridgeURL == "" || ownerGUID == "" || ownerGUID == "shared" {
-			return errors.New("legacy MusicBox requires both URL and verified fnOS user GUID")
-		}
-		if _, err = netease.NewBridge(bridgeURL); err != nil {
-			return err
-		}
-		if err = manager.Add(accounts.Account{ID: "legacy", Name: "Imported MusicBox", BridgeURL: bridgeURL}); err != nil {
-			return err
-		}
-		if err = manager.Bind(ownerGUID, "legacy"); err != nil {
-			return err
-		}
 	}
 	gw.SetAccounts(manager)
 	settings, err := preferences.New(filepath.Join(filepath.Dir(accountsFile), "music-settings.json"))

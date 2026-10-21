@@ -60,7 +60,7 @@ func TestAccountModeSwitchAndIdentityGate(t *testing.T) {
 	go srv.Serve(listener)
 	defer srv.Close()
 	manager, e := accounts.New(filepath.Join(t.TempDir(), "private", "accounts.json"), func(u string) (provider.Adapter, error) {
-		if strings.Contains(u, "8771") {
+		if strings.HasSuffix(u, "/b") {
 			return accountAdapter{"B"}, nil
 		}
 		return accountAdapter{"A"}, nil
@@ -68,8 +68,8 @@ func TestAccountModeSwitchAndIdentityGate(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_ = manager.Add(accounts.Account{ID: "a", Name: "A", BridgeURL: "http://127.0.0.1:8770"})
-	_ = manager.Add(accounts.Account{ID: "b", Name: "B", BridgeURL: "http://127.0.0.1:8771"})
+	_ = manager.Add(accounts.Account{ID: "a", Name: "A", BridgeURL: "native://netease/a"})
+	_ = manager.Add(accounts.Account{ID: "b", Name: "B", BridgeURL: "native://netease/b"})
 	_ = manager.Bind("alice", "a")
 	_ = manager.Bind("bob", "b")
 	g := New(sock)
@@ -85,16 +85,16 @@ func TestAccountModeSwitchAndIdentityGate(t *testing.T) {
 		return w
 	}
 	path := "/music/api/v1/search/track?q=whatever&size=3"
-	if body := query("alice", path).Body.String(); !strings.Contains(body, "[music box] A") || strings.Contains(body, "[music box] B") {
+	if body := query("alice", path).Body.String(); !strings.Contains(body, "[网易云] A") || strings.Contains(body, "[网易云] B") {
 		t.Fatal("Alice leak", body)
 	}
-	if body := query("bob", path).Body.String(); !strings.Contains(body, "[music box] B") || strings.Contains(body, "[music box] A") {
+	if body := query("bob", path).Body.String(); !strings.Contains(body, "[网易云] B") || strings.Contains(body, "[网易云] A") {
 		t.Fatal("Bob leak", body)
 	}
-	if body := query("charlie", path).Body.String(); strings.Contains(body, "music box") {
+	if body := query("charlie", path).Body.String(); strings.Contains(body, "网易云") {
 		t.Fatal("unbound user leak", body)
 	}
-	if body := query("", path).Body.String(); strings.Contains(body, "music box") {
+	if body := query("", path).Body.String(); strings.Contains(body, "网易云") {
 		t.Fatal("anonymous leak", body)
 	}
 	guid, _ := fnmusic.EncodeNetEaseID("123")
@@ -112,7 +112,7 @@ func TestAccountModeSwitchAndIdentityGate(t *testing.T) {
 		t.Fatal(e)
 	}
 	for _, who := range []string{"alice", "bob", "charlie"} {
-		if body := query(who, path).Body.String(); !strings.Contains(body, "[music box] A") {
+		if body := query(who, path).Body.String(); !strings.Contains(body, "[网易云] A") {
 			t.Fatal("shared not resolved", who, body)
 		}
 	}
@@ -131,7 +131,7 @@ func TestAccountModeSwitchAndIdentityGate(t *testing.T) {
 	if e := manager.SetIsolation(true); e != nil {
 		t.Fatal(e)
 	}
-	if body := query("charlie", path).Body.String(); strings.Contains(body, "music box") {
+	if body := query("charlie", path).Body.String(); strings.Contains(body, "网易云") {
 		t.Fatal("isolation not restored", body)
 	}
 }

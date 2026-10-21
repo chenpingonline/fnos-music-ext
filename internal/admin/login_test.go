@@ -2,42 +2,26 @@ package admin
 
 import (
 	"encoding/json"
-	"fmt"
-	"net/http"
+	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/chenpingonline/fnos-music-ext/internal/accounts"
 )
 
 func TestLoginAdminChallengeNeverLeaksAndOwnership(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/auth/login":
-			fmt.Fprint(w, `{"data":{"unikey":"test-key"}}`)
-		case "/api/v1/auth/login/check":
-			if r.URL.Query().Get("unikey") != "test-key" {
-				t.Error("wrong challenge key")
-			}
-			fmt.Fprint(w, `{"data":{"code":803}}`)
-		case "/api/v1/auth/status":
-			fmt.Fprint(w, `{"data":{"logged_in":true}}`)
-		case "/api/v1/user/playlists":
-			fmt.Fprint(w, `{"ok":true,"logged_in":true,"account_uid":8,"data":[{"playlist_id":11,"name":"Owned","user_id":8},{"playlist_id":12,"name":"Saved","user_id":7}]}`)
-		case "/api/v1/user/playlists/11/tracks":
-			fmt.Fprint(w, `{"ok":true,"data":[]}`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	m, e := accounts.New(filepath.Join(t.TempDir(), "private", "accounts.json"), nil)
+	var code atomic.Int64
+	code.Store(803)
+	var logged atomic.Bool
+	logged.Store(true)
+	m, e := accounts.New(filepath.Join(t.TempDir(), "private", "accounts.json"), func(string) (provider.Adapter, error) { return &testLoginAdapter{code: &code, logged: &logged}, nil })
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e := m.Add(accounts.Account{ID: "a", Name: "Account", BridgeURL: server.URL}); e != nil {
+	if e := m.Add(accounts.Account{ID: "a", Name: "Account", BridgeURL: "native://netease/a"}); e != nil {
 		t.Fatal(e)
 	}
 	h := New(Config{Accounts: m})

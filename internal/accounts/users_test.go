@@ -18,7 +18,7 @@ func TestUsernameAssignmentWaitsForVerifiedMusicIdentity(t *testing.T) {
 		return userdir.User{Username: "alice", UID: "1000"}, name == "alice"
 	}
 	m.lookupUser = lookup
-	if err := m.Add(Account{ID: "a", Name: "A", BridgeURL: "http://127.0.0.1:8770"}); err != nil {
+	if err := m.Add(Account{ID: "a", Name: "A", BridgeURL: "native://netease/a"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.BindUsername("alice", "a"); err != nil {

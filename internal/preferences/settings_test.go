@@ -72,3 +72,34 @@ func TestPersonalPlaylistsLegacyDefaultAndPersistedChoice(t *testing.T) {
 		t.Fatal("explicit disabled choice did not persist", err)
 	}
 }
+
+func TestPersonalSelectionsPersistenceAndIsolation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	store, _ := New(path)
+	cfg := store.Snapshot()
+	cfg.PersonalSelections = map[string][]string{"alice": {"901"}, "bob": {}}
+	if err := store.Update(cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.PersonalSelections["alice"][0] = "changed"
+	snap := store.Snapshot()
+	if snap.PersonalSelections["alice"][0] != "901" {
+		t.Fatal("update retained caller data")
+	}
+	snap.PersonalSelections["alice"][0] = "changed-again"
+	if store.Snapshot().PersonalSelections["alice"][0] != "901" {
+		t.Fatal("snapshot exposed mutable data")
+	}
+	reloaded, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids, ok := reloaded.Snapshot().PersonalSelections["bob"]; !ok || len(ids) != 0 {
+		t.Fatal("empty selection was lost")
+	}
+	cfg = reloaded.Snapshot()
+	cfg.PersonalSelections["alice"] = []string{"901", "901"}
+	if err := store.Update(cfg); err == nil {
+		t.Fatal("duplicate IDs accepted")
+	}
+}

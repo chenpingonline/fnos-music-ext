@@ -22,7 +22,7 @@ import (
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 )
 
-// The MusicBox QR flow uses WEAPI on music.163.com, rather than the EAPI
+// The QR flow uses WEAPI on music.163.com, rather than the EAPI
 // transport used for playback. Each account keeps its own browser cookie jar.
 func (n *Native) initWebSession() error {
 	base := *n.base

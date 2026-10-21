@@ -1,9 +1,9 @@
 :root {
   color-scheme: light;
-  --frame: #f4f5f7; --canvas: #ffffff; --surface: #f6f6f7;
+  --frame: #f7f8fa; --canvas: #ffffff; --surface: #f7f8fa;
   --text: #172031; --muted: #687387; --subtle: #737e90;
-  --line: #e1e2e5; --line-soft: #eeeff1; --hover: #e9e9ec;
-  --nav-active: #e0edff; --selected: #eff5ff;
+  --line: #dfe4eb; --line-soft: #edf0f4; --hover: #eef1f5;
+  --nav-active: #e8f0fc; --selected: #f5f8fe;
   --accent: #0067d9; --accent-hover: #0059bf; --on-accent: #ffffff;
   --danger: #b53632; --danger-bg: #fff1ef; --danger-line: #f0cecb;
   --success: #28804d; --success-bg: #edf7f0;

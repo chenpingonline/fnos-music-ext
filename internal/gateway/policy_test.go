@@ -192,3 +192,51 @@ func TestPersonalPlaylistsIndependentOfSelectedCharts(t *testing.T) {
 		t.Fatal("enable did not restore personal lists", lists, err)
 	}
 }
+
+func TestPersonalSelectionsAreScopedAndRevisionAware(t *testing.T) {
+	g := New("/unused")
+	defer g.Close()
+	store, _ := preferences.New("")
+	g.SetPreferences(store)
+	cfg := store.Snapshot()
+	source := &personalPlaylistSource{}
+	user := provider.User{FnOSGUID: "user", Verified: true}
+	load := func(scope string) []provider.Playlist {
+		t.Helper()
+		rows, err := g.availableLists(context.Background(), user, source, scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	if len(load("alice:session")) != 1 {
+		t.Fatal("legacy default hides personal playlists")
+	}
+	cfg.PersonalSelections = map[string][]string{"alice": {}}
+	if err := store.Update(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(load("alice:session")) != 0 {
+		t.Fatal("empty selection did not hide playlists or cache was stale")
+	}
+	if len(load("bob:session")) != 1 {
+		t.Fatal("selection leaked to another account")
+	}
+	cfg.PersonalSelections["alice"] = []string{"901", "not-owned"}
+	store.Update(cfg)
+	rows := load("alice:session")
+	if len(rows) != 1 || rows[0].ID != "901" {
+		t.Fatal("selection bypassed ownership", rows)
+	}
+	cfg.PersonalSelections["alice"] = []string{"not-owned"}
+	store.Update(cfg)
+	if len(load("alice:session")) != 0 {
+		t.Fatal("unselected personal playlist remains available")
+	}
+	cfg.Hot = true
+	store.Update(cfg)
+	rows = load("alice:session")
+	if len(rows) != 1 || rows[0].Kind != "recommend" {
+		t.Fatal("personal selection affected recommendations", rows)
+	}
+}

@@ -1,6 +1,5 @@
-// Package accounts persists administrator-controlled MusicBox instances and
-// resolves which instance a verified fnOS user may access.
-// A MusicBox instance has its own cookie jar; accounts MUST NOT share a URL.
+// Package accounts persists native NetEase accounts and resolves which account
+// a verified fnOS user may access.
 package accounts
 
 import (
@@ -26,7 +25,7 @@ import (
 var (
 	ErrInvalid  = errors.New("invalid account configuration")
 	ErrNotFound = errors.New("account does not exist")
-	ErrConflict = errors.New("account or bridge address already configured")
+	ErrConflict = errors.New("account already configured")
 	idPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{1,48}$`)
 	userPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 )
@@ -34,7 +33,7 @@ var (
 type Account struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
-	BridgeURL  string `json:"bridge_url"`
+	BridgeURL  string `json:"bridge_url"` // Historical field name; only native://netease/<ID> is accepted.
 	CacheToken string `json:"cache_token,omitempty"`
 }
 type Config struct {
@@ -48,10 +47,11 @@ type Config struct {
 }
 type Snapshot struct {
 	Config
-	// These are public diagnostics for administrator only, not MusicBox cookies.
+	// These are public diagnostics for administrator only, not login cookies.
 }
 
 // Builder permits test-specific adapters and validates the backend configuration.
+// When supplied, it also constructs transient login adapters for tests.
 type Builder func(url string) (provider.Adapter, error)
 type Manager struct {
 	lookupUser func(string) (userdir.User, bool)
@@ -60,6 +60,7 @@ type Manager struct {
 	config     Config
 	adapters   map[string]provider.Adapter
 	build      Builder
+	draft      Builder
 }
 
 func defaultConfig() Config {
@@ -69,15 +70,15 @@ func New(path string, build Builder) (*Manager, error) {
 	if path == "" {
 		return nil, fmt.Errorf("%w: state path required", ErrInvalid)
 	}
+	draft := build
 	if build == nil {
 		build = func(u string) (provider.Adapter, error) {
-			if strings.HasPrefix(u, "native://") {
-				return netease.NewNative(u, filepath.Dir(path))
-			}
-			return netease.NewBridge(u)
+			return netease.NewNative(u, filepath.Dir(path))
 		}
+		draft = func(u string) (provider.Adapter, error) { return netease.NewLoginDraft(u) }
 	}
-	m := &Manager{lookupUser: userdir.Lookup, path: path, build: build, config: defaultConfig(), adapters: map[string]provider.Adapter{}}
+
+	m := &Manager{lookupUser: userdir.Lookup, path: path, build: build, draft: draft, config: defaultConfig(), adapters: map[string]provider.Adapter{}}
 	if err := m.load(); err != nil {
 		return nil, err
 	}
@@ -141,6 +142,9 @@ func (m *Manager) validate(c Config) (map[string]provider.Adapter, error) {
 		if _, exists := adapters[a.ID]; exists {
 			return nil, ErrConflict
 		}
+		if a.BridgeURL != "native://netease/"+a.ID {
+			return nil, fmt.Errorf("%w: 仅支持原生网易云账号，地址须为 native://netease/<账号 ID>；旧桥接账号请移除后重新扫码添加", ErrInvalid)
+		}
 		var adapter provider.Adapter
 		var err error
 		for _, old := range m.config.Accounts {
@@ -155,11 +159,9 @@ func (m *Manager) validate(c Config) (map[string]provider.Adapter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: account %s: %v", ErrInvalid, a.ID, err)
 		}
-		if strings.HasPrefix(a.BridgeURL, "native://") && a.BridgeURL != "native://netease/"+a.ID {
-			return nil, fmt.Errorf("%w: native URL account ID must match configured ID", ErrInvalid)
-		}
+
 		if seenURL[strings.ToLower(a.BridgeURL)] {
-			return nil, fmt.Errorf("%w: separate accounts need separate MusicBox instances", ErrConflict)
+			return nil, fmt.Errorf("%w: separate accounts need separate native identities", ErrConflict)
 		}
 		seenURL[strings.ToLower(a.BridgeURL)] = true
 		adapters[a.ID] = adapter

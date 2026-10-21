@@ -2,7 +2,7 @@
 import { createServer } from 'vite'
 import { readFileSync } from 'node:fs'
 const version=readFileSync(new URL('../../packaging/fpk/manifest.in',import.meta.url),'utf8').match(/^version\s*=\s*(\S+)/m)[1]
-const config={isolation:false,shared_account:'family',accounts:[{id:'family',name:'家庭账号',bridge_url:'native://netease/family'},{id:'personal',name:'私人账号',bridge_url:'native://netease/personal'},{id:'bridge',name:'备用桥接',bridge_url:'http://127.0.0.1:8770'}],bindings:{},user_bindings:{},user_identities:{}}
+const config={isolation:false,shared_account:'family',accounts:[{id:'family',name:'家庭账号',bridge_url:'native://netease/family'},{id:'personal',name:'私人账号',bridge_url:'native://netease/personal'}],bindings:{},user_bindings:{},user_identities:{}}
 let settings={quality:'high',download_quality:'app',search_timeout:10,search_probe:false,deep_page:true,max_pages:10,personal_playlists:true,hot:false,daily:false,public_enabled:false,public:[],save_enabled:false,auto_cover:true,auto_lyrics:false,cache_max:2,cache_dir:'/vol1/1000/music-cache',cover_cache_dir:'/vol1/1000/cover-cache',download_dir:'/vol1/1000/Music',auto_bind:false,bind_timeout:300,handoff_max:2,scan_path:'',filename:'{artist} - {title}'}
 const drafts=new Map();let draftSequence=0
 const playlists=[{id:'morning',title:'日常循环',track_count:3},{id:'quiet',title:'轻音乐',track_count:2}]
@@ -14,7 +14,7 @@ const previewPlugin={name:'local-ui-preview',transformIndexHtml(html){return htm
  if(path==='/csrf')data={token:'preview_token_'.repeat(4)}
  else if(path==='/status')data={version,checked_at:new Date().toISOString(),socket:{journal:true,target_state:{connected:true},upstream_state:{connected:true}}}
  else if(path==='/account-enrollments'&&method==='POST'){
-  const id='draft_'+(++draftSequence);drafts.set(id,{name:body.name,provider:body.provider,bridge_url:body.bridge_url,checks:0,saved:false});data={id,qr_url:'https://music.163.com/login?codekey=local-ui-preview-only'}
+  const id='draft_'+(++draftSequence);drafts.set(id,{name:body.name,checks:0,saved:false});data={id,qr_url:'https://music.163.com/login?codekey=local-ui-preview-only'}
  }
  else if(path.startsWith('/account-enrollments/')){
   const [, ,id,action]=path.split('/');const draft=drafts.get(id)
@@ -25,7 +25,7 @@ const previewPlugin={name:'local-ui-preview',transformIndexHtml(html){return htm
    draft.checks++
    const scenario=new URL(req.headers.referer??'http://127.0.0.1').searchParams.get('enrollment')
    const success=scenario==='success'&&draft.checks>=2
-   if(success&&!draft.saved){config.accounts.push({id,name:draft.name,bridge_url:draft.provider==='native'?'native://netease/'+id:draft.bridge_url});draft.saved=true}
+   if(success&&!draft.saved){config.accounts.push({id,name:draft.name,bridge_url:'native://netease/'+id});draft.saved=true}
    data={state:success?'success':draft.checks>1?'scanned':'pending',logged_in:success,saved:draft.saved}
   }else{res.statusCode=404;data={error:'预览未模拟此操作'}}
  }

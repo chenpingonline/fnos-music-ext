@@ -91,7 +91,7 @@ func TestOnlineIntegration(t *testing.T) {
 	if e := json.NewDecoder(rec.Body).Decode(&out); e != nil {
 		t.Fatal(e)
 	}
-	if len(out.Data.List) != 2 || out.Data.Total != 2 || out.Data.List[0]["title"] != "Local" || out.Data.List[1]["title"] != "[music box] NetSong" {
+	if len(out.Data.List) != 2 || out.Data.Total != 2 || out.Data.List[0]["title"] != "Local" || out.Data.List[1]["title"] != "[网易云] NetSong" {
 		t.Fatalf("merged=%+v", out)
 	}
 	guid, _ := fnmusic.EncodeNetEaseID("123")

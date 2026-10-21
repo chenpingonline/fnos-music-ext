@@ -61,8 +61,6 @@ func TestPlaybackHTTPRejectionIdentifiesEndpoint(t *testing.T) {
 		{"native", "api", "netease-api-http-403"},
 		{"native", "business", "netease-api-code-403"},
 		{"native", "cdn", "media-cdn-http-403"},
-		{"bridge", "api", "musicbox-api-http-403"},
-		{"bridge", "cdn", "media-cdn-http-403"},
 	} {
 		t.Run(tc.kind+"-"+tc.where, func(t *testing.T) {
 			mediaCalls := 0
@@ -73,9 +71,6 @@ func TestPlaybackHTTPRejectionIdentifiesEndpoint(t *testing.T) {
 			api := &http.Client{Transport: imageTransport(func(r *http.Request) (*http.Response, error) {
 				status := 200
 				body := `{"code":200,"data":[{"code":200,"url":"https://cdn.example/audio.flac?token=private"}]}`
-				if tc.kind == "bridge" {
-					body = `{"ok":true,"data":{"code":200,"url":"https://cdn.example/audio.flac?token=private"}}`
-				}
 				if tc.where == "api" {
 					status = 403
 					body = "private API body"
@@ -86,12 +81,7 @@ func TestPlaybackHTTPRejectionIdentifiesEndpoint(t *testing.T) {
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			})}
 			base, _ := url.Parse("https://api.example")
-			var source provider.Adapter
-			if tc.kind == "native" {
-				source = &Native{base: base, client: api, media: media}
-			} else {
-				source = &Bridge{base: base, client: api, media: media}
-			}
+			source := &Native{base: base, client: api, media: media}
 			_, err := source.Play(context.Background(), user(), provider.PlaybackRequest{TrackID: "123"})
 			if diagnostics.Code(err) != tc.want {
 				t.Fatal("wrong endpoint", diagnostics.Code(err))

@@ -13,7 +13,7 @@ import (
 
 var errNoChallenge = errors.New("QR challenge missing or expired; generate a new QR code")
 var errPollFast = errors.New("QR polling is limited to once every 2 seconds")
-var errNoLoginBridge = errors.New("the configured source does not support QR login")
+var errNoLoginAdapter = errors.New("the configured source does not support QR login")
 
 type loginChallenge struct {
 	key, url             string
@@ -38,7 +38,7 @@ func (l *loginManager) adapter(id string) (netease.LoginAdapter, string, error) 
 	}
 	v, ok := a.(netease.LoginAdapter)
 	if !ok {
-		return nil, "", errNoLoginBridge
+		return nil, "", errNoLoginAdapter
 	}
 	return v, u, nil
 }
@@ -120,7 +120,7 @@ func (l *loginManager) tracks(ctx context.Context, id, playlistID string) ([]pro
 		return nil, accounts.ErrNotFound
 	}
 	// Never fetch arbitrary playlist IDs. A playlist must belong to this
-	// MusicBox instance's logged-in user before any tracks can be requested.
+	// account's logged-in user before any tracks can be requested.
 	playlists, err := a.ListPlaylists(ctx, provider.User{FnOSGUID: "admin-preview", Verified: true})
 	if err != nil {
 		return nil, err

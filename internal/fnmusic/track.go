@@ -49,7 +49,9 @@ func TrackVO(t provider.Track, markSource bool) (map[string]any, bool) {
 	}
 	title := t.Title
 	if markSource {
-		title = "[music box] " + title
+		if name := provider.SourceName(t.Source); name != "" {
+			title = "[" + name + "] " + title
+		}
 	}
 	artists := make([]map[string]any, 0, len(t.Artists))
 	for i, artist := range t.Artists {

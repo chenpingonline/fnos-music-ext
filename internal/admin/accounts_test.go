@@ -28,10 +28,10 @@ func TestAccountAdminAPI(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w
 	}
-	if w := call("POST", "/accounts", `{"id":"a","name":"Private","bridge_url":"http://127.0.0.1:8770"}`, false); w.Code != 403 {
+	if w := call("POST", "/accounts", `{"id":"a","name":"Private","bridge_url":"native://netease/a"}`, false); w.Code != 403 {
 		t.Fatal("no auth", w.Code)
 	}
-	if w := call("POST", "/accounts", `{"id":"a","name":"Private","bridge_url":"http://127.0.0.1:8770"}`, true); w.Code != 201 {
+	if w := call("POST", "/accounts", `{"id":"a","name":"Private","bridge_url":"native://netease/a"}`, true); w.Code != 201 {
 		t.Fatal("add", w.Code, w.Body.String())
 	}
 	if w := call("PUT", "/accounts/shared", `{"account_id":"a"}`, true); w.Code != 200 {

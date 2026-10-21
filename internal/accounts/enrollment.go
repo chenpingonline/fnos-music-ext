@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"path/filepath"
-	"strings"
 
 	"github.com/chenpingonline/fnos-music-ext/internal/netease"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
@@ -17,14 +16,11 @@ func (m *Manager) PrepareLogin(a Account) (provider.Adapter, error) {
 	defer m.mu.Unlock()
 	c := clone(m.config)
 	c.Accounts = append(c.Accounts, a)
-	adapters, err := m.validate(c)
+	_, err := m.validate(c)
 	if err != nil {
 		return nil, err
 	}
-	if strings.HasPrefix(a.BridgeURL, "native://") {
-		return netease.NewLoginDraft(a.BridgeURL)
-	}
-	return adapters[a.ID], nil
+	return m.draft(a.BridgeURL)
 }
 
 // CommitLogin publishes a successfully authorized account only after both private

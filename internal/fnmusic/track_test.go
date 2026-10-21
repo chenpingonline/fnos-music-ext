@@ -71,11 +71,11 @@ func TestVirtualID(t *testing.T) {
 	}
 }
 func TestTrackVO(t *testing.T) {
-	vo, ok := TrackVO(provider.Track{ID: "123", Title: "Hello", Artists: []string{"A"}, Album: "Album", DurationMS: 93000}, true)
+	vo, ok := TrackVO(provider.Track{ID: "123", Source: "netease", Title: "Hello", Artists: []string{"A"}, Album: "Album", DurationMS: 93000}, true)
 	if !ok {
 		t.Fatal("vo")
 	}
-	if vo["title"] != "[music box] Hello" {
+	if vo["title"] != "[网易云] Hello" {
 		t.Fatal(vo)
 	}
 	spec := vo["audioSpec"].(map[string]any)

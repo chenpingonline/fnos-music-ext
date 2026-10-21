@@ -90,7 +90,7 @@ prepare_data(){
   touch "$DATA_DIR/.legacy-migrated"
   [[ ! -L "$CONFIG_DIR/provider.env" ]] || fail 'provider.env 不能是软链接。'
   if [[ ! -e "$CONFIG_DIR/provider.env" ]]; then
-    printf 'FNMUSIC_GO_NETEASE_URL=\nFNMUSIC_GO_NETEASE_USER_GUID=\n' > "$CONFIG_DIR/provider.env"
+    printf '# 网易云账号请在管理界面扫码添加\n' > "$CONFIG_DIR/provider.env"
   fi
   chmod 0600 "$CONFIG_DIR/provider.env"
 }

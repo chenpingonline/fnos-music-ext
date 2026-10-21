@@ -6,6 +6,7 @@ import { errorMessage, request } from './api.ts'
 import { useAccountPanel, type Account } from './useAccountPanel.ts'
 import { useAccountEnrollment } from './useAccountEnrollment.ts'
 import AppIcon from './components/AppIcon.vue'
+import neteaseIcon from './assets/netease-cloud-music.png'
 import PlaylistCover from './components/PlaylistCover.vue'
 import AppDialog from './components/AppDialog.vue'
 import MusicSettings from './components/MusicSettings.vue'
@@ -38,7 +39,7 @@ const busy = computed(() => refreshing.value || operation.value !== '')
 const content = ref<HTMLElement>(), scrolling = ref(false)
 const trackSection = ref<HTMLElement>()
 const search = ref(''), showAdd = ref(false), deleting = ref<Account | null>(null)
-const accountName = ref(''), provider = ref('native'), bridgeURL = ref('http://127.0.0.1:8770')
+const accountName = ref('')
 type NASUser={username:string;uid:string;current:boolean;verified:boolean;account_id:string}
 const nasUsers=ref<NASUser[]>([]),userSearch=ref(''),usersError=ref(''),usersLoading=ref(false)
 const matchingUsers=computed(()=>nasUsers.value.filter(u=>u.username.toLocaleLowerCase().includes(userSearch.value.trim().toLocaleLowerCase())))
@@ -67,7 +68,6 @@ const nameValid = computed(() => accountName.value.trim().length > 0 && new Text
 const proxyReady = computed(() => !!state.value?.socket.journal && state.value.socket.target_state?.connected === true && state.value.socket.upstream_state?.connected === true)
 const proxyText = computed(() => !state.value ? '等待检查' : proxyReady.value ? '代理已连接' : state.value.socket.journal ? '需要检查' : '未接管')
 const checkedTime = computed(() => state.value?.checked_at ? new Date(state.value.checked_at).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—')
-function accountType(account: Account) { return account.bridge_url.startsWith('native://') ? '原生网易云' : 'MusicBox 桥接' }
 function accountUsers(account: Account) {
   return Object.values(config.value.bindings).filter(id=>id===account.id).length + Object.values(config.value.user_bindings??{}).filter(id=>id===account.id).length
 }
@@ -111,12 +111,12 @@ async function mutate(key: string, path: string, method: string, body: unknown, 
   finally { if (!disposed) operation.value = '' }
 }
 function openAdd() {
-  clearFeedback(); enrollment.close(); accountName.value = ''; provider.value = 'native'; bridgeURL.value = 'http://127.0.0.1:8770'; showAdd.value = true
+  clearFeedback(); enrollment.close(); accountName.value = ''; showAdd.value = true
 }
 function closeAdd() { enrollment.close(); showAdd.value=false }
 async function addAccount() {
   if (!nameValid.value) return
-  await enrollment.start(accountName.value.trim(),provider.value,bridgeURL.value.trim())
+  await enrollment.start(accountName.value.trim())
 }
 watch(enrollment.saved, async saved => {
  if (!saved || disposed) return
@@ -200,13 +200,13 @@ onUnmounted(() => {disposed=true; usersController?.abort(); controller?.abort();
               <div class="context-bar"><div><span class="muted">当前访问模式：</span><AppIcon :name="config.isolation?'lock':'accounts'"/><strong>{{config.isolation?'用户隔离':'共享账号'}}</strong><button class="text-button" @click="navigate('access')">调整</button></div></div>
               <section class="account-section" aria-labelledby="accounts-title">
                 <div class="account-toolbar"><h2 id="accounts-title" class="sr-only">已添加账号</h2><label v-if="config.accounts.length" class="search-field"><AppIcon name="search"/><input v-model="search" aria-label="搜索账号" placeholder="搜索名称或标识" type="search"/><button v-if="search" class="icon-button" aria-label="清除搜索" @click="search=''"><AppIcon name="close"/></button></label></div>
-                <div v-if="!config.accounts.length" class="empty-state"><span class="empty-icon"><AppIcon name="music"/></span><h3>添加你的第一个音乐账号</h3><p>连接网易云账号，在飞牛音乐中使用在线音源。</p><button class="button primary" @click="openAdd"><AppIcon name="plus"/>添加账号</button><span class="helper">支持原生网易云与本机 MusicBox 桥接</span></div>
+                <div v-if="!config.accounts.length" class="empty-state"><span class="empty-icon"><AppIcon name="music"/></span><h3>添加你的第一个音乐账号</h3><p>连接网易云账号，在飞牛音乐中使用在线音源。</p><button class="button primary" @click="openAdd"><AppIcon name="plus"/>添加账号</button><span class="helper">使用网易云 App 扫码登录</span></div>
                 <div v-else-if="!matchingAccounts.length" class="empty-state"><AppIcon name="search"/><h3>没有找到匹配的账号</h3><p>试试其他名称或账号标识。</p><button class="button secondary" @click="search=''">清除搜索</button></div>
                 <template v-else>
                   <div class="account-columns" aria-hidden="true"><span>账号</span><span>连接类型</span><span>访问范围</span><span>歌单</span></div>
                   <div class="account-list"><article v-for="account in matchingAccounts" :key="account.id" class="account-row">
-                    <div class="account-identity"><span class="account-avatar" :class="account.bridge_url.startsWith('native://')?'native-avatar':'bridge-avatar'"><img v-if="account.bridge_url.startsWith('native://')" src="/images/netease-cloud-music.png" alt="网易云音乐"/><AppIcon v-else name="box"/></span><div class="account-info"><h3>{{account.name}}</h3></div></div>
-                    <div class="account-type"><span>{{account.bridge_url.startsWith('native://')?'网易云音乐':'通过 MusicBox 连接'}}</span></div>
+                    <div class="account-identity"><span class="account-avatar native-avatar"><img :src="neteaseIcon" width="40" height="40" decoding="async" alt="网易云音乐"/></span><div class="account-info"><h3>{{account.name}}</h3></div></div>
+                    <div class="account-type"><span>网易云音乐</span></div>
                     <div class="account-scope"><strong><AppIcon :name="config.isolation?'user':'accounts'"/>{{accountScope(account)}}</strong></div>
                     <div class="row-actions"><button class="account-open" :disabled="busy" @click="panel.openPlaylists(account)"><span>歌单</span><AppIcon name="arrow"/></button><button class="icon-button danger-hover" :aria-label="'删除账号 '+account.name" :title="'删除 '+account.name" :disabled="busy" @click="confirmDelete(account)"><AppIcon name="trash"/></button></div>
                   </article></div>
@@ -238,12 +238,13 @@ onUnmounted(() => {disposed=true; usersController?.abort(); controller?.abort();
         </template>
 
         <template v-else>
-          <section class="section"><div class="section-heading"><h2>开始使用</h2><span class="badge">v{{version}} 预览版</span></div><ol class="steps"><li><span>1</span><div><h3>添加音源账号</h3><p>优先选择原生网易云；已有本机 MusicBox 服务时可选择桥接。</p></div></li><li><span>2</span><div><h3>完成网易云登录</h3><p>添加账号时，在同一弹窗填写别名并使用网易云 App 扫码，验证成功后自动保存。</p></div></li><li><span>3</span><div><h3>设置访问方式</h3><p>为飞牛用户绑定账号，或选择一个供已验证用户共用的账号。</p></div></li></ol></section>
-          <section class="section"><div class="section-heading"><h2>常见问题</h2></div><details class="faq"><summary>添加账号后，为什么用户仍看不到在线音源？</summary><p>确认账号已登录。用户隔离模式下，还需要在“访问设置”搜索飞牛用户名并分配账号；共享模式下需要选择共享账号。</p></details><details class="faq"><summary>原生模式与 MusicBox 桥接有什么区别？</summary><p>原生模式直接连接网易云，无需单独运行 Python 或 Docker。桥接模式连接 NAS 本机的 MusicBox 服务，每个账号需使用独立实例和登录态。</p></details><details class="faq"><summary>数据保存在哪里？</summary><p>账号配置位于应用数据目录的 accounts.json，原生登录凭证位于同目录的 netease-sessions。配置与凭证仅本机 root 可读写，删除原生账号会清理其凭证。</p></details><details class="faq"><summary>连接异常时如何排查？</summary><p>先确认官方飞牛音乐与本扩展均已启动，再到“运行概览”检查连接详情。需要进一步排查时，在 NAS 终端查看服务日志：</p><pre class="diagnostic">journalctl -u fnmusic-go -n 100 --no-pager</pre></details></section>
+          <section class="section"><div class="section-heading"><h2>开始使用</h2><span class="badge">v{{version}} 预览版</span></div><ol class="steps"><li><span>1</span><div><h3>添加音源账号</h3><p>填写账号别名，并使用网易云 App 扫码登录。</p></div></li><li><span>2</span><div><h3>完成网易云登录</h3><p>添加账号时，在同一弹窗填写别名并使用网易云 App 扫码，验证成功后自动保存。</p></div></li><li><span>3</span><div><h3>设置访问方式</h3><p>为飞牛用户绑定账号，或选择一个供已验证用户共用的账号。</p></div></li></ol></section>
+          <section class="section"><div class="section-heading"><h2>常见问题</h2></div><details class="faq"><summary>添加账号后，为什么用户仍看不到在线音源？</summary><p>确认账号已登录。用户隔离模式下，还需要在“访问设置”搜索飞牛用户名并分配账号；共享模式下需要选择共享账号。</p></details><details class="faq"><summary>需要安装其他音源服务吗？</summary><p>不需要。扩展使用 Go 原生实现直接连接网易云，扫码登录后即可使用。</p></details><details class="faq"><summary>数据保存在哪里？</summary><p>账号配置位于应用数据目录的 accounts.json，原生登录凭证位于同目录的 netease-sessions。配置与凭证仅本机 root 可读写，删除原生账号会清理其凭证。</p></details><details class="faq"><summary>连接异常时如何排查？</summary><p>先确认官方飞牛音乐与本扩展均已启动，再到“运行概览”检查连接详情。需要进一步排查时，在 NAS 终端查看服务日志：</p><pre class="diagnostic">journalctl -u fnmusic-go -n 100 --no-pager</pre></details></section>
           <div class="info-note"><AppIcon name="help"/><p>当前为预览版。原生模式依赖网易云非公开协议，仍需真实 fnOS 与音源验证。请仅使用拥有合法权限的账号及音源。</p></div>
         </template>
       </div>
     </div>
+    <div id="settings-footer" class="settings-footer-host"></div>
   </main>
 
   <AppDialog v-if="pendingPage" title="尚有未保存的设置" @close="pendingPage=null"><div class="dialog-body"><p>离开此页面会丢弃尚未保存的设置。</p></div><div class="dialog-footer"><button class="button secondary" @click="pendingPage=null">继续编辑</button><button class="button danger" @click="settingsRef?.reset();selected=pendingPage!;pendingPage=null">丢弃并离开</button></div></AppDialog>
@@ -252,9 +253,7 @@ onUnmounted(() => {disposed=true; usersController?.abort(); controller?.abort();
       <p class="dialog-description">填写别名并扫码登录，确认成功后才会保存账号。</p>
       <div v-if="enrollment.error.value" class="feedback error" role="alert">{{enrollment.error.value}}</div>
       <fieldset class="enrollment-fields" :disabled="enrollment.busy.value || !!enrollment.id.value">
-        <div class="provider-options" role="group" aria-label="音源连接方式"><label :class="{chosen:provider==='native'}"><input v-model="provider" type="radio" value="native" name="provider"/><div><strong>原生网易云<span class="badge">推荐</span></strong><span>直接连接，无需额外服务</span></div></label><label :class="{chosen:provider==='musicbox'}"><input v-model="provider" type="radio" value="musicbox" name="provider"/><div><strong>MusicBox 桥接</strong><span>连接 NAS 上已运行的实例</span></div></label></div>
         <div class="field"><label for="account-name">账号别名</label><input id="account-name" v-model="accountName" autofocus autocomplete="off" placeholder="例如：我的网易云" required maxlength="80" :aria-invalid="accountName.length>0 && !nameValid" aria-describedby="account-name-hint"/><p v-if="accountName.length>0 && !nameValid" id="account-name-hint" class="helper danger-text">名称过长，请缩短后重试（最多约 26 个汉字）。</p></div>
-        <div v-if="provider==='musicbox'" class="field"><label for="bridge-url">MusicBox 本机地址</label><input id="bridge-url" v-model="bridgeURL" type="url" required placeholder="http://127.0.0.1:8770"/><p class="helper">每个账号使用独立的本机实例与端口。</p></div>
       </fieldset>
       <div v-if="enrollment.qrImage.value" class="enrollment-qr"><img :src="enrollment.qrImage.value" width="192" height="192" alt="网易云音乐登录二维码"/><div><h3 role="status">{{enrollment.status.value}}</h3><p>使用网易云音乐 App 扫码，并在手机上确认。</p><p class="helper">正在自动检查结果，登录成功后保存。</p><button type="button" class="text-button" :disabled="enrollment.busy.value" @click="addAccount">重新生成二维码</button></div></div>
       <p v-else class="helper enrollment-hint">取消或登录失败不会添加账号。</p>
@@ -262,7 +261,7 @@ onUnmounted(() => {disposed=true; usersController?.abort(); controller?.abort();
   </AppDialog>
 
   <AppDialog v-if="deleting" title="删除音源账号" :busy="busy" @close="deleting=null; error=''">
-    <div class="dialog-body"><div v-if="error" class="feedback error" role="alert">{{error}}</div><p>确定删除 <strong>{{deleting.name}}</strong>？</p><p class="muted">此账号的飞牛用户绑定会一并解除。{{deleting.bridge_url.startsWith('native://')?'保存在 NAS 的原生登录凭证也会被清除。':'MusicBox 服务中的登录状态不会被清除。'}}此操作无法撤销。</p></div><div class="dialog-footer"><button class="button secondary" :disabled="busy" @click="deleting=null; error=''">取消</button><button class="button danger" :disabled="busy" @click="deleteAccount">{{operation==='delete'?'删除中…':'删除账号'}}</button></div>
+    <div class="dialog-body"><div v-if="error" class="feedback error" role="alert">{{error}}</div><p>确定删除 <strong>{{deleting.name}}</strong>？</p><p class="muted">此账号的飞牛用户绑定会一并解除。保存在 NAS 的登录凭证也会被清除。此操作无法撤销。</p></div><div class="dialog-footer"><button class="button secondary" :disabled="busy" @click="deleting=null; error=''">取消</button><button class="button danger" :disabled="busy" @click="deleteAccount">{{operation==='delete'?'删除中…':'删除账号'}}</button></div>
   </AppDialog>
 
   <AppDialog v-if="focusAccount" :title="focusAccount.name+' · 歌单'" @close="panel.close()">

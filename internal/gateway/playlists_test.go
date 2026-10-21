@@ -56,7 +56,7 @@ func TestOfficialPlaylistInjectionAndCrossAccountBlock(t *testing.T) {
 	go srv.Serve(listener)
 	defer srv.Close()
 	m, e := accounts.New(filepath.Join(t.TempDir(), "private", "accounts.json"), func(u string) (provider.Adapter, error) {
-		if strings.HasSuffix(u, ":8771") {
+		if strings.HasSuffix(u, "/b") {
 			return playlistAdapter{accountAdapter{label: "B"}}, nil
 		}
 		return playlistAdapter{accountAdapter{label: "A"}}, nil
@@ -64,7 +64,7 @@ func TestOfficialPlaylistInjectionAndCrossAccountBlock(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, a := range []accounts.Account{{ID: "a", Name: "a", BridgeURL: "http://127.0.0.1:8770"}, {ID: "b", Name: "b", BridgeURL: "http://127.0.0.1:8771"}} {
+	for _, a := range []accounts.Account{{ID: "a", Name: "a", BridgeURL: "native://netease/a"}, {ID: "b", Name: "b", BridgeURL: "native://netease/b"}} {
 		if e := m.Add(a); e != nil {
 			t.Fatal(e)
 		}

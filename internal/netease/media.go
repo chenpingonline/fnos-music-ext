@@ -22,7 +22,7 @@ func playbackHTTPError(endpoint string, status int) error {
 
 const mediaUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-// Prevent a compromised bridge from issuing SSRF requests into the NAS/LAN.
+// Prevent a compromised upstream from issuing SSRF requests into the NAS/LAN.
 func safeMediaURL(u *url.URL) bool {
 	if (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Hostname() == "" {
 		return false
@@ -157,13 +157,6 @@ func openPlaylistImageSized(ctx context.Context, client *http.Client, user provi
 func (n *Native) OpenPlaylistCover(ctx context.Context, u provider.User, p provider.Playlist) (provider.Stream, error) {
 	return openPlaylistImage(ctx, n.media, u, p)
 }
-func (b *Bridge) OpenPlaylistCover(ctx context.Context, u provider.User, p provider.Playlist) (provider.Stream, error) {
-	return openPlaylistImage(ctx, b.media, u, p)
-}
-
 func (n *Native) OpenPlaylistCoverSized(ctx context.Context, u provider.User, p provider.Playlist, size int) (provider.Stream, error) {
 	return openPlaylistImageSized(ctx, n.media, u, p, size)
-}
-func (b *Bridge) OpenPlaylistCoverSized(ctx context.Context, u provider.User, p provider.Playlist, size int) (provider.Stream, error) {
-	return openPlaylistImageSized(ctx, b.media, u, p, size)
 }

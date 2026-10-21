@@ -74,7 +74,7 @@ func decodeEAPIResponse(body []byte) ([]byte, error) {
 	return plain, nil
 }
 
-// Match the EAPI profile used by MusicBox; this does not alter entitlement.
+// Use a consistent EAPI client profile; this does not alter entitlement.
 const eapiUserAgent = "NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)"
 
 func eapiHeader(cookie, deviceID string) map[string]any {

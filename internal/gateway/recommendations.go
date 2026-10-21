@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/chenpingonline/fnos-music-ext/internal/fnmusic"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
+	"strings"
 	"time"
 )
 
@@ -82,6 +83,21 @@ func (g *Gateway) buildAvailableLists(ctx context.Context, user provider.User, s
 	var err error
 	if personal {
 		lists, err = g.ownedList(ctx, user, source)
+		// Account IDs cannot contain ':'. The suffix identifies an account session.
+		account, _, _ := strings.Cut(scope, ":")
+		if selected, configured := c.PersonalSelections[account]; configured {
+			allowed := make(map[string]bool, len(selected))
+			for _, id := range selected {
+				allowed[id] = true
+			}
+			visible := make([]provider.Playlist, 0, len(lists))
+			for _, list := range lists {
+				if allowed[list.ID] {
+					visible = append(visible, list)
+				}
+			}
+			lists = visible
+		}
 	}
 	if _, ok := source.(recommendationAdapter); !ok {
 		return lists, err

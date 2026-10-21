@@ -20,7 +20,7 @@ import (
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 )
 
-// Native implements a NetEase provider without Python, Node.js or MusicBox.
+// Native implements a NetEase provider directly in Go.
 // IMPORTANT: NetEase's EAPI is undocumented; compatibility with current live
 // servers is not guaranteed. The provider does not bypass paywalls or DRM.
 // Each Native instance persists only its own authenticated cookie to a 0600 file.

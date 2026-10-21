@@ -14,11 +14,11 @@ export function useAccountEnrollment() {
   const {default:QRCode}=await import('qrcode')
   return QRCode.toDataURL(parsed.href,{width:224,margin:3,errorCorrectionLevel:'M',color:{dark:'#111111',light:'#ffffff'}})
  }
- async function start(name:string,provider:string,bridgeURL:string){
+ async function start(name:string){
   if(busy.value)return
   const current=++generation;controller=new AbortController();busy.value=true;error.value='';clearTimeout(poll)
   try{
-   const result=id.value?await request<{qr_url:string}>('/account-enrollments/'+id.value+'/qr','POST',{},controller.signal):await request<Draft>('/account-enrollments','POST',{name,provider,bridge_url:provider==='musicbox'?bridgeURL:''},controller.signal)
+   const result=id.value?await request<{qr_url:string}>('/account-enrollments/'+id.value+'/qr','POST',{},controller.signal):await request<Draft>('/account-enrollments','POST',{name},controller.signal)
    if(current!==generation)return
    if('id' in result && typeof result.id==='string')id.value=result.id
    const png=await image(result.qr_url);if(current!==generation)return

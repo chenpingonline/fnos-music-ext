@@ -21,29 +21,30 @@ type Selection struct {
 	Kind     string `json:"kind"`
 }
 type Config struct {
-	Quality           string      `json:"quality"`
-	DownloadQuality   string      `json:"download_quality"`
-	SearchTimeout     int         `json:"search_timeout"`
-	SearchProbe       bool        `json:"search_probe"`
-	DeepPage          bool        `json:"deep_page"`
-	MaxPages          int         `json:"max_pages"`
-	PersonalPlaylists bool        `json:"personal_playlists"`
-	Hot               bool        `json:"hot"`
-	Daily             bool        `json:"daily"`
-	PublicEnabled     bool        `json:"public_enabled"`
-	Public            []Selection `json:"public"`
-	SaveEnabled       bool        `json:"save_enabled"`
-	AutoCover         bool        `json:"auto_cover"`
-	AutoLyrics        bool        `json:"auto_lyrics"`
-	CacheMax          int         `json:"cache_max"`
-	CacheDir          string      `json:"cache_dir"`
-	CoverCacheDir     string      `json:"cover_cache_dir"`
-	DownloadDir       string      `json:"download_dir"`
-	AutoBind          bool        `json:"auto_bind"`
-	BindTimeout       int         `json:"bind_timeout"`
-	HandoffMax        int         `json:"handoff_max"`
-	ScanPath          string      `json:"scan_path"`
-	Filename          string      `json:"filename"`
+	PersonalSelections map[string][]string `json:"personal_selections,omitempty"`
+	Quality            string              `json:"quality"`
+	DownloadQuality    string              `json:"download_quality"`
+	SearchTimeout      int                 `json:"search_timeout"`
+	SearchProbe        bool                `json:"search_probe"`
+	DeepPage           bool                `json:"deep_page"`
+	MaxPages           int                 `json:"max_pages"`
+	PersonalPlaylists  bool                `json:"personal_playlists"`
+	Hot                bool                `json:"hot"`
+	Daily              bool                `json:"daily"`
+	PublicEnabled      bool                `json:"public_enabled"`
+	Public             []Selection         `json:"public"`
+	SaveEnabled        bool                `json:"save_enabled"`
+	AutoCover          bool                `json:"auto_cover"`
+	AutoLyrics         bool                `json:"auto_lyrics"`
+	CacheMax           int                 `json:"cache_max"`
+	CacheDir           string              `json:"cache_dir"`
+	CoverCacheDir      string              `json:"cover_cache_dir"`
+	DownloadDir        string              `json:"download_dir"`
+	AutoBind           bool                `json:"auto_bind"`
+	BindTimeout        int                 `json:"bind_timeout"`
+	HandoffMax         int                 `json:"handoff_max"`
+	ScanPath           string              `json:"scan_path"`
+	Filename           string              `json:"filename"`
 }
 
 func Defaults() Config {
@@ -80,6 +81,7 @@ func (s *Store) Snapshot() Config {
 	defer s.mu.RUnlock()
 	c := s.config
 	c.Public = append([]Selection{}, c.Public...)
+	c.PersonalSelections = clonePersonalSelections(c.PersonalSelections)
 	return c
 }
 func (s *Store) Revision() uint64 { s.mu.RLock(); defer s.mu.RUnlock(); return s.revision }
@@ -96,10 +98,37 @@ func (s *Store) Update(c Config) error {
 	}
 	s.config = c
 	s.config.Public = append([]Selection{}, c.Public...)
+	s.config.PersonalSelections = clonePersonalSelections(c.PersonalSelections)
 	s.revision++
 	return nil
 }
+func clonePersonalSelections(source map[string][]string) map[string][]string {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string][]string, len(source))
+	for account, ids := range source {
+		result[account] = append([]string{}, ids...)
+	}
+	return result
+}
 func Validate(c Config) error {
+	if len(c.PersonalSelections) > 100 {
+		return errors.New("个人歌单筛选最多支持 100 个账号")
+	}
+	for account, ids := range c.PersonalSelections {
+		if len(account) == 0 || len(account) > 48 || strings.Trim(account, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") != "" || len(ids) > 1000 {
+			return errors.New("个人歌单筛选无效")
+		}
+		seen := map[string]bool{}
+		for _, id := range ids {
+			if id == "" || len(id) > 128 || strings.ContainsAny(id, "\x00\r\n") || seen[id] {
+				return errors.New("个人歌单选择无效或重复")
+			}
+			seen[id] = true
+		}
+	}
+
 	if c.Quality != "high" && c.Quality != "balanced" && c.Quality != "smooth" {
 		return errors.New("音质偏好无效")
 	}

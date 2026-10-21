@@ -135,7 +135,7 @@ func New(c Config) http.Handler {
 				return
 			}
 			// Route account subresources before the generic DELETE account handler.
-			if strings.HasPrefix(r.URL.Path, "/api/accounts/") && handleMusicboxSubresource(w, r, login) {
+			if strings.HasPrefix(r.URL.Path, "/api/accounts/") && handleAccountSubresource(w, r, login) {
 				return
 			}
 			switch {
@@ -280,6 +280,13 @@ func New(c Config) http.Handler {
 			_, _ = w.Write(html)
 			return
 		}
+		// Vite names bundled resources by content hash, so upgrades use new URLs.
+		// Keep the HTML entry point and authenticated API responses uncached.
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			if info, err := fs.Stat(files, strings.TrimPrefix(r.URL.Path, "/")); err == nil && !info.IsDir() {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
+		}
 		public.ServeHTTP(w, r)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -298,9 +305,9 @@ func New(c Config) http.Handler {
 	})
 }
 
-// handleMusicboxSubresource exposes account-specific QR and read-only playlists
+// handleAccountSubresource exposes account-specific QR and read-only playlists
 // only through the existing authenticated, administrator-only gateway.
-func handleMusicboxSubresource(w http.ResponseWriter, r *http.Request, l *loginManager) bool {
+func handleAccountSubresource(w http.ResponseWriter, r *http.Request, l *loginManager) bool {
 	relative := strings.TrimPrefix(r.URL.Path, "/api/accounts/")
 	bits := strings.Split(relative, "/")
 	if len(bits) < 2 || bits[0] == "" {

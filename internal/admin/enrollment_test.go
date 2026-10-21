@@ -3,8 +3,6 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -14,27 +12,15 @@ import (
 	"time"
 
 	"github.com/chenpingonline/fnos-music-ext/internal/accounts"
+	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 )
 
 func TestEnrollmentOnlyPersistsAfterVerifiedLogin(t *testing.T) {
 	var code atomic.Int64
 	code.Store(801)
 	var logged atomic.Bool
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/auth/login":
-			fmt.Fprint(w, `{"data":{"unikey":"private-key"}}`)
-		case "/api/v1/auth/login/check":
-			fmt.Fprintf(w, `{"data":{"code":%d}}`, code.Load())
-		case "/api/v1/auth/status":
-			fmt.Fprintf(w, `{"data":{"logged_in":%t}}`, logged.Load())
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer upstream.Close()
 	path := filepath.Join(t.TempDir(), "private", "accounts.json")
-	manager, err := accounts.New(path, nil)
+	manager, err := accounts.New(path, func(string) (provider.Adapter, error) { return &testLoginAdapter{code: &code, logged: &logged}, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +37,15 @@ func TestEnrollmentOnlyPersistsAfterVerifiedLogin(t *testing.T) {
 		}
 		return out
 	}
+	// Removed provider choices cannot create drafts or contact an upstream service.
+	if out := call("POST", "", `{"name":"Old bridge","provider":"musicbox"}`, "alice"); out.Code != 400 {
+		t.Fatal("removed provider accepted", out.Code, out.Body.String())
+	}
+	if len(enroll.entries) != 0 {
+		t.Fatal("invalid provider created a draft")
+	}
 	begin := func() string {
-		out := call("POST", "", fmt.Sprintf(`{"name":"My music","provider":"musicbox","bridge_url":%q}`, upstream.URL), "alice")
+		out := call("POST", "", `{"name":"My music"}`, "alice")
 		if out.Code != 201 {
 			t.Fatal(out.Code, out.Body.String())
 		}
@@ -136,7 +129,7 @@ func TestEnrollmentOnlyPersistsAfterVerifiedLogin(t *testing.T) {
 	if len(manager.Snapshot().Accounts) != 1 {
 		t.Fatal("duplicate account saved")
 	}
-	reloaded, err := accounts.New(path, nil)
+	reloaded, err := accounts.New(path, func(string) (provider.Adapter, error) { return &testLoginAdapter{code: &code, logged: &logged}, nil })
 	if err != nil || len(reloaded.Snapshot().Accounts) != 1 {
 		t.Fatal("saved account not durable", err)
 	}

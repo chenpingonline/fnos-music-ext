@@ -6,7 +6,7 @@
 
 本项目参考 [fnmusic-ext](https://github.com/javycoder/fnos_music_ext) 的功能设计与集成方式重新实现，网易云协议适配参考 [MusicBox](https://github.com/darknessomi/musicbox)。感谢原项目作者与贡献者。
 
-> 当前为开发预览版，真实 fnOS 安装、官方客户端与音源兼容性仍需设备验收。版本以 [`manifest.in`](packaging/fpk/manifest.in) 为准，近期变化见 [v0.5.22 发布说明](docs/V0_5_22_RELEASE_NOTES.md)。
+> 当前为开发预览版，真实 fnOS 安装、官方客户端与音源兼容性仍需设备验收。版本以 [`manifest.in`](packaging/fpk/manifest.in) 为准，近期变化见 [v0.5.25 发布说明](docs/V0_5_25_RELEASE_NOTES.md)。
 
 ## 主要功能
 
@@ -16,7 +16,7 @@
 - **下载与存储**：App 下载、MP3 转码、边听边存、滚动缓存、封面与歌词保存，以及收藏自动落库绑定。
 - **原生集成**：通过可恢复的 Unix Socket 代理适配官方音乐服务，提供接管、恢复与健康检查；管理面板跟随 fnOS 主题。
 
-功能细节和默认设置见[播放与存储说明](docs/MUSIC_FEATURES.md)。目前未接入 musicdl、洛雪音源，也不支持自动启动 MusicBox 实例。
+功能细节和默认设置见[播放与存储说明](docs/MUSIC_FEATURES.md)。当前仅支持 Go 原生网易云，未接入 musicdl、洛雪音源。
 
 ## 运行条件
 
@@ -31,7 +31,7 @@
 支持两种音源接入方式：
 
 - **Go 原生网易云**：直接在管理面板添加账号并扫码登录，无需 Python、MusicBox 或 Docker。
-- **MusicBox 桥接**：连接自行部署的本机 MusicBox HTTP 服务；不同账号需使用独立实例和 Cookie 目录。
+- 仅保留原生连接，账号在管理页扫码添加；不再支持 MusicBox HTTP 桥接及旧版桥接启动参数。
 
 ## 使用流程
 
@@ -133,7 +133,7 @@ sudo ./dist/linux-amd64/fnmusic-go restore
 
 本项目采用 [MIT License](LICENSE)。代码许可证不包含音乐内容或平台 API 的使用授权；音频可用性取决于源站、歌曲资源和账号权益，本项目不绕过会员限制或 DRM。
 
-网易云接口可能随上游调整而失效。当前本地及模拟服务验证不能替代真实设备验收；播放 403 等兼容性修正仍需在 NAS 上复测，详见[发布说明](docs/V0_5_22_RELEASE_NOTES.md)。
+网易云接口可能随上游调整而失效。当前本地及模拟服务验证不能替代真实设备验收；播放 403 等兼容性修正仍需在 NAS 上复测，详见[发布说明](docs/V0_5_25_RELEASE_NOTES.md)。
 
 ## 历史开发阶段
 
@@ -144,19 +144,19 @@ sudo ./dist/linux-amd64/fnmusic-go restore
 
 ### v0.3.0-preview · 网易云账号管理
 
-本阶段新增 **可开关的用户隔离**：默认按飞牛用户 GUID 一对一绑定独立 MusicBox 实例；关闭隔离后，管理员可以在管理页面选择一个共享网易云账号，所有经飞牛身份验证的用户可使用该账号。切回隔离模式保留历史绑定，配置持久化在 `0600` 的 `${TRIM_PKGVAR}/accounts.json`，无需重启。
+本阶段新增 **可开关的用户隔离**：默认按飞牛用户 GUID 一对一绑定独立网易云账号；关闭隔离后，管理员可以在管理页面选择一个共享网易云账号，所有经飞牛身份验证的用户可使用该账号。切回隔离模式保留历史绑定，配置持久化在 `0600` 的 `${TRIM_PKGVAR}/accounts.json`，无需重启。
 
-新增管理界面包括账号添加/删除、共享账号选择、飞牛用户绑定及配置错误提示。v0.5 推荐原生账号 `native://netease/<账号 ID>`，无需运行 Python；兼容模式仍可连接独立 MusicBox。 详情参见 [docs/ACCOUNT_MODES.md](docs/ACCOUNT_MODES.md)。
+新增管理界面包括账号添加/删除、共享账号选择、飞牛用户绑定及配置错误提示。当前仅支持原生账号 `native://netease/<账号 ID>`，无需运行 Python。 详情参见 [docs/ACCOUNT_MODES.md](docs/ACCOUNT_MODES.md)。
 
 运行版本以 `packaging/fpk/manifest.in` 为准，构建时注入程序与管理页面。真实 fnOS 与音乐源的兼容性仍需设备验证。
 
-### v0.4.0-preview · 登录与歌单
+### v0.4.0-preview · 登录与歌单（历史实现，桥接已移除）
 
 - 在管理员控制台为单个 MusicBox 实例生成网易云扫码挑战、手动检查扫码状态和登录状态。挑战密钥仅保留于 Go 内存 3 分钟，不存入账户文件；扫码二维码包含二维码密钥是扫码协议自身要求。服务端限制轮询频率，管理员管理接口必须经可信 fnOS 管理网关。
 - 支持只读列出当前实例登录的网易云账号**自己创建**的歌单、歌单歌曲（最多 1000 首）；不会把“收藏的其他人歌单”混入列表。
 - 对飞牛官方 `/music/api/v1/playlist/list`、`/playlist/detail`、`/track/playlist-detail/list` 进行只读注入，原始本地歌单照常透传。虚拟歌单 GUID 绑定已选择的实例，切换账户后不再识别前一实例的 GUID。
 - 账号隔离模式和共享账号选择保持 v0.3 行为；媒体文件不自动下载、歌单修改不写入网易端。
-- **依旧需要事先单独启动各账户的 MusicBox HTTP 进程，Python 音源依赖未被移除**。扫码挑战通过原 MusicBox 的 `POST /api/v1/auth/login` 和 `GET /api/v1/auth/login/check` 实现；单独端口的实例必须具有独立 cookie 保存目录。
+- 当时需要事先单独启动各账户的 MusicBox HTTP 进程；当前版本已移除这一桥接实现。扫码挑战通过原 MusicBox 的 `POST /api/v1/auth/login` 和 `GET /api/v1/auth/login/check` 实现；单独端口的实例必须具有独立 cookie 保存目录。
 - 后端保留 `qr_ascii` 兼容字段；当前 Vue 管理页根据官方登录链接本地生成图形二维码，并提供登录链接备用入口。
 - 本机测试不等于音乐版权方授权，也不等于实际飞牛手机客户端适配完成；仍无真实 fnOS FPK 实机验收。
 
@@ -165,7 +165,7 @@ sudo ./dist/linux-amd64/fnmusic-go restore
 
 ### v0.5.0-preview · Go 原生网易云适配
 
-添加账号时选择 **Go 原生网易云（实验性）**，输入账号 ID（仅允许字母/数字/下划线/减号）和显示名称。后端生成 `native://netease/<账号ID>`，不启动 Python、MusicBox 或 Docker。原有 `http://127.0.0.1:<端口>` MusicBox 桥接账号保持兼容，允许混合使用两类账号。
+添加账号时填写显示名称并使用网易云 App 扫码。后端自动生成账号 ID 和 `native://netease/<账号ID>`，无需 Python 或 Docker。旧版 HTTP 桥接已移除。
 
 #### 原生实现范围
 
@@ -176,7 +176,7 @@ sudo ./dist/linux-amd64/fnmusic-go restore
 
 #### 重要限制
 
-网易云 EAPI/WEAPI 属于**未公开、未承诺稳定**的协议。本地集成测试使用的是可控模拟响应，**尚未验证真实账号手机授权、VIP 权益、真实 fnOS App/FPK**（已验证匿名二维码生成和待扫码状态查询）。如上游接口变更，原生模式可能返回 401、403 或无法登录。切换到 MusicBox 桥接是手动兼容措施，并非保证可用。软件不附送音源凭证、不绕过收费或 DRM；仅在已授权范围内使用。实际互联网生产请求和版权/条款需用户自行确认。
+网易云 EAPI/WEAPI 属于**未公开、未承诺稳定**的协议。本地集成测试使用的是可控模拟响应，**尚未验证真实账号手机授权、VIP 权益、真实 fnOS App/FPK**（已验证匿名二维码生成和待扫码状态查询）。如上游接口变更，原生模式可能返回 401、403 或无法登录。软件不附送音源凭证、不绕过收费或 DRM；仅在已授权范围内使用。实际互联网生产请求和版权/条款需用户自行确认。
 
 详细见 [docs/V0_5_RELEASE_NOTES.md](docs/V0_5_RELEASE_NOTES.md)。
 

@@ -40,7 +40,7 @@ func TestIsolationSharedAndPersist(t *testing.T) {
 	if !m.Snapshot().Isolation {
 		t.Fatal("default must be isolated")
 	}
-	for _, a := range []Account{{ID: "alice", Name: "Alice", BridgeURL: "http://127.0.0.1:8770"}, {ID: "bob", Name: "Bob", BridgeURL: "http://127.0.0.1:8771"}} {
+	for _, a := range []Account{{ID: "alice", Name: "Alice", BridgeURL: "native://netease/alice"}, {ID: "bob", Name: "Bob", BridgeURL: "native://netease/bob"}} {
 		if e := m.Add(a); e != nil {
 			t.Fatal(e)
 		}
@@ -54,7 +54,7 @@ func TestIsolationSharedAndPersist(t *testing.T) {
 	if _, _, ok := m.Resolve("fn-charlie"); ok {
 		t.Fatal("unbound user has an account")
 	}
-	if a, id, ok := m.Resolve("fn-alice"); !ok || id != "alice" || a.ID() != "http://127.0.0.1:8770" {
+	if a, id, ok := m.Resolve("fn-alice"); !ok || id != "alice" || a.ID() != "native://netease/alice" {
 		t.Fatal("wrong isolated account")
 	}
 	if e := m.SetShared("bob"); e != nil {
@@ -109,11 +109,11 @@ func TestRejectAmbiguousAndInvalid(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = m.Add(Account{ID: "first", Name: "A", BridgeURL: "http://127.0.0.1:8770"}); e != nil {
+	if e = m.Add(Account{ID: "first", Name: "A", BridgeURL: "native://netease/first"}); e != nil {
 		t.Fatal(e)
 	}
-	if e = m.Add(Account{ID: "second", Name: "B", BridgeURL: "http://127.0.0.1:8770"}); !errors.Is(e, ErrConflict) {
-		t.Fatal("same shared bridge accepted", e)
+	if e = m.Add(Account{ID: "first", Name: "B", BridgeURL: "native://netease/first"}); !errors.Is(e, ErrConflict) {
+		t.Fatal("duplicate account accepted", e)
 	}
 	if e = m.Add(Account{ID: "attack", Name: "Bad", BridgeURL: "http://192.168.1.1:8770"}); e == nil {
 		t.Fatal("non-local URL accepted")
@@ -136,7 +136,7 @@ func TestConcurrentSwitching(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = m.Add(Account{ID: "a", Name: "A", BridgeURL: "http://127.0.0.1:8770"}); e != nil {
+	if e = m.Add(Account{ID: "a", Name: "A", BridgeURL: "native://netease/a"}); e != nil {
 		t.Fatal(e)
 	}
 	if e = m.Bind("user", "a"); e != nil {
@@ -237,5 +237,22 @@ func TestReaddedNativeAccountHasFreshCacheScope(t *testing.T) {
 	_, after, ok := m.ResolveScoped("user")
 	if !ok || before == after {
 		t.Fatalf("account ID reuse leaked cache scope %q", before)
+	}
+}
+
+func TestRemovedBridgeConfigurationIsRejectedWithoutMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounts.json")
+	raw := []byte(`{"isolation":true,"accounts":[{"id":"old","name":"Old bridge","bridge_url":"http://127.0.0.1:8770"}],"bindings":{}}`)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err := New(path, func(string) (provider.Adapter, error) { called = true; return fakeAdapter{}, nil })
+	if !errors.Is(err, ErrInvalid) || called {
+		t.Fatal("bridge configuration reached builder", err, called)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(raw) {
+		t.Fatal("rejected configuration was modified", err)
 	}
 }

@@ -13,7 +13,7 @@
 | --- | --- |
 | 账号配置 | `${TRIM_PKGVAR}/accounts.json` |
 | 原生登录会话 | `${TRIM_PKGVAR}/netease-sessions/` |
-| MusicBox 兼容配置 | `${TRIM_PKGETC}/provider.env` |
+| 保留的服务环境配置 | `${TRIM_PKGETC}/provider.env`（不再支持桥接变量） |
 | 接管 journal、临时 Socket | `/run/fnmusic-go/` |
 | 管理网关 Socket | `${TRIM_APPDEST}/fnmusic-go.sock` |
 
@@ -99,7 +99,7 @@ systemd 仍是本应用的进程管理器，但不独立维护开机启用状态
 
 补齐飞牛音乐使用的 `playlist/batch-detail?guids=…`（兼容 guid 和逗号列表），返回当前用户可见的在线歌单元数据；混合本地歌单时仅将本地 ID 交给官方接口，保留本地条目与额外字段，官方错误仍原样返回。个人歌单开关和账号切换同样约束批量详情与封面，不暴露隐藏歌单。公共歌单缺少数量时按实际曲目补齐详情计数。
 
-歌单 coverId 按参考项目使用 `track_<32hex>`，同源 static/cover 接口识别作用域并转发真实封面；没有独立封面时使用歌单曲目封面。Native 和 MusicBox 都复用受限图片传输（仅公网地址、图片类型、6 MiB 上限、不向图片站发送登录凭证），支持 GET/HEAD。
+歌单 coverId 按参考项目使用 `track_<32hex>`，同源 static/cover 接口识别作用域并转发真实封面；没有独立封面时使用歌单曲目封面。原生适配器使用受限图片传输（仅公网地址、图片类型、6 MiB 上限、不向图片站发送登录凭证），支持 GET/HEAD。
 
 新增列表→批量详情→曲目→封面完整合同测试，含混合官方歌单、参数别名、关闭个人歌单和跨用户拒绝，以及图片地址/类型/大小校验。已实际验证匿名热歌榜返回 200 首曲目；真实用户歌单及 fnOS 客户端仍需设备验收，不能由本地模拟响应证明。参考： https://github.com/javycoder/fnos_music_ext/blob/main/proxy/app.py 。
 

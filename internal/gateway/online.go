@@ -122,7 +122,7 @@ func (g *Gateway) loadIdentity(ctx context.Context, r *http.Request) (provider.U
 		return provider.User{}, false
 	}
 	// Credentials are forwarded ONLY to the local official Unix Socket. They are
-	// never sent to the MusicBox bridge.
+	// never sent to the music provider.
 	for _, k := range []string{"Cookie", "Authorization", "X-Trim-Music-Temp-Token"} {
 		if val := r.Header.Values(k); len(val) > 0 {
 			req.Header[k] = append([]string(nil), val...)

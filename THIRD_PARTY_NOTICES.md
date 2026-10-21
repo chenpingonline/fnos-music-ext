@@ -11,4 +11,4 @@
 ## 前端图标
 
 - [Lucide](https://lucide.dev/)：管理界面线性图标，使用 `lucide-vue-next`，ISC 许可，包含 Feather 来源图标的 MIT 通知；完整许可随 npm 依赖提供，并保留于 [web/public/licenses/lucide.txt](web/public/licenses/lucide.txt)，构建后随前端资源一并嵌入。
-- 网易云音乐品牌图标：以用户提供的图标为参考重新绘制，移除截图外框并保留透明圆角背景，保存于 `web/public/images/netease-cloud-music.png`；品牌名称及标志的权利归各自所有者。
+- 网易云音乐品牌图标：以用户提供的图标为参考重新绘制，移除截图外框并保留透明圆角背景，保存于 `web/src/assets/netease-cloud-music.png`；品牌名称及标志的权利归各自所有者。

@@ -70,9 +70,8 @@ func (m *enrollmentManager) handle(w http.ResponseWriter, r *http.Request) bool 
 	defer cancel()
 	if r.URL.Path == prefix && r.Method == http.MethodPost {
 		var req struct {
-			Name      string `json:"name"`
-			Provider  string `json:"provider"`
-			BridgeURL string `json:"bridge_url"`
+			Name     string `json:"name"`
+			Provider string `json:"provider"`
 		}
 		if err := decode(r, &req); err != nil {
 			fail(w, err)
@@ -85,10 +84,8 @@ func (m *enrollmentManager) handle(w http.ResponseWriter, r *http.Request) bool 
 		}
 		a := accounts.Account{ID: "account_" + id, Name: strings.TrimSpace(req.Name)}
 		switch req.Provider {
-		case "native":
+		case "", "native":
 			a.BridgeURL = "native://netease/" + a.ID
-		case "musicbox":
-			a.BridgeURL = req.BridgeURL
 		default:
 			fail(w, accounts.ErrInvalid)
 			return true
@@ -222,7 +219,7 @@ func (m *enrollmentManager) handle(w http.ResponseWriter, r *http.Request) bool 
 func (d *enrollment) begin(ctx context.Context) (netease.QRLogin, error) {
 	login, ok := d.adapter.(netease.LoginAdapter)
 	if !ok {
-		return netease.QRLogin{}, errNoLoginBridge
+		return netease.QRLogin{}, errNoLoginAdapter
 	}
 	qr, err := login.BeginQRLogin(ctx)
 	if err != nil {

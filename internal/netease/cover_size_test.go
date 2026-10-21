@@ -38,19 +38,12 @@ func TestCoverSizeTransformsOnlyNetEaseImageURLs(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(data)), ContentLength: int64(len(data))}, nil
 			})}
 			native := &Native{media: client}
-			bridge := &Bridge{media: client}
 			for _, open := range []func() (provider.Stream, error){
 				func() (provider.Stream, error) {
 					return native.OpenTrackCoverSized(context.Background(), user(), provider.Track{CoverURL: tc.url}, tc.size)
 				},
 				func() (provider.Stream, error) {
-					return bridge.OpenTrackCoverSized(context.Background(), user(), provider.Track{CoverURL: tc.url}, tc.size)
-				},
-				func() (provider.Stream, error) {
 					return native.OpenPlaylistCoverSized(context.Background(), user(), provider.Playlist{CoverURL: tc.url}, tc.size)
-				},
-				func() (provider.Stream, error) {
-					return bridge.OpenPlaylistCoverSized(context.Background(), user(), provider.Playlist{CoverURL: tc.url}, tc.size)
 				},
 			} {
 				image, e := open()
@@ -59,7 +52,7 @@ func TestCoverSizeTransformsOnlyNetEaseImageURLs(t *testing.T) {
 				}
 				image.Body.Close()
 			}
-			if calls != 4 {
+			if calls != 2 {
 				t.Fatal(calls)
 			}
 		})

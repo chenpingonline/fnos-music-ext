@@ -48,8 +48,32 @@ func TestEmbeddedProductionAssets(t *testing.T) {
 		req := httptest.NewRequest("GET", "/app/fnmusic-go/assets/"+entry.Name(), nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
+		if w.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+			t.Fatalf("asset %s is not cacheable: %s", entry.Name(), w.Header().Get("Cache-Control"))
+		}
 		if w.Code != 200 || w.Body.Len() == 0 {
 			t.Fatalf("embedded asset %s: status %d", entry.Name(), w.Code)
 		}
+	}
+}
+
+func TestAdminEntryAndAPIStayUncached(t *testing.T) {
+	h := New(Config{})
+	for _, path := range []string{"/", "/index.html", "/api/status"} {
+		req := httptest.NewRequest("GET", "/app/fnmusic-go"+path, nil)
+		req.Header.Set("X-Trim-Isadmin", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("%s cache policy = %q", path, got)
+		}
+	}
+}
+
+func TestMissingAssetIsNotCached(t *testing.T) {
+	w := httptest.NewRecorder()
+	New(Config{}).ServeHTTP(w, httptest.NewRequest("GET", "/app/fnmusic-go/assets/missing.png", nil))
+	if w.Code != 404 || strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
+		t.Fatalf("missing asset: status %d cache %q", w.Code, w.Header().Get("Cache-Control"))
 	}
 }

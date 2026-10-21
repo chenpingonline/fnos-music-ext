@@ -40,8 +40,6 @@ func Message(err error) string {
 	switch f.Reason {
 	case "netease-api-http-403", "netease-api-code-403":
 		return "网易云播放接口拒绝请求（403），尚未取得音频，请检查登录状态及音源连接"
-	case "musicbox-api-http-403":
-		return "MusicBox 接口拒绝请求（403），请检查桥接服务访问设置"
 	case "media-cdn-http-403":
 		return "已取得播放地址，但音频 CDN 拒绝访问（403），请检查音源地址有效性及 NAS 出口网络"
 	case "not-entitled":
