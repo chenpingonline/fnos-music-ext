@@ -3,7 +3,7 @@ import { ApiError, errorMessage, request } from './api.ts'
 export type Account = {id: string; name: string; bridge_url: string}
 type LoginStatus = {state: string; logged_in: boolean}
 type QRChallenge = {qr_url: string; qr_ascii?: string}
-export type MusicPlaylist = {id: string; title: string; track_count: number}
+export type MusicPlaylist = {id: string; title: string; track_count: number; cover_url?: string}
 type MusicTrack = {id: string; title: string; artists: string[]}
 
 export function useAccountPanel() {
