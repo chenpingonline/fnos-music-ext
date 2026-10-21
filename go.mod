@@ -1,3 +1,3 @@
 module github.com/chenpingonline/fnos-music-ext
 
-go 1.23
+go 1.27.3

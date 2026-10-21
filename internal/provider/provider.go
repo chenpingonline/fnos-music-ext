@@ -30,6 +30,7 @@ type AudioInfo struct {
 	Quality string `json:"quality"`
 }
 type Track struct {
+	MediaID      string     `json:"media_id,omitempty"`
 	Audio        *AudioInfo `json:"audio,omitempty"`
 	ID           string     `json:"id"`
 	Source       string     `json:"source"`
@@ -71,6 +72,7 @@ type Lyrics struct {
 	TranslatedLRC string
 }
 type Playlist struct {
+	Source     string  `json:"source,omitempty"`
 	Kind       string  `json:"kind,omitempty"`
 	ID         string  `json:"id"`
 	Title      string  `json:"title"`

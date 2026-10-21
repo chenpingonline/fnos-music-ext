@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"path/filepath"
 
-	"github.com/chenpingonline/fnos-music-ext/internal/netease"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 )
 
@@ -42,7 +41,10 @@ func (m *Manager) CommitLogin(ctx context.Context, a Account, adapter provider.A
 	if err != nil {
 		return err
 	}
-	native, ok := adapter.(*netease.Native)
+	native, ok := adapter.(interface {
+		CommitLogin(string, string) error
+		RollbackLogin()
+	})
 	if ok {
 		if err = native.CommitLogin(filepath.Dir(m.path), a.ID); err != nil {
 			return err

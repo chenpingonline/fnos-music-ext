@@ -6,7 +6,7 @@
 
 本项目参考 [fnmusic-ext](https://github.com/javycoder/fnos_music_ext) 的功能设计与集成方式重新实现，网易云协议适配参考 [MusicBox](https://github.com/darknessomi/musicbox)。感谢原项目作者与贡献者。
 
-> 当前为开发预览版，真实 fnOS 安装、官方客户端与音源兼容性仍需设备验收。版本以 [`manifest.in`](packaging/fpk/manifest.in) 为准，近期变化见 [v0.5.25 发布说明](docs/V0_5_25_RELEASE_NOTES.md)。
+> 当前为开发预览版，真实 fnOS 安装、官方客户端与音源兼容性仍需设备验收。版本以 [`manifest.in`](packaging/fpk/manifest.in) 为准，近期变化见 [v0.5.27 安全更新说明](docs/V0_5_27_RELEASE_NOTES.md)。
 
 ## 主要功能
 
@@ -16,7 +16,7 @@
 - **下载与存储**：App 下载、MP3 转码、边听边存、滚动缓存、封面与歌词保存，以及收藏自动落库绑定。
 - **原生集成**：通过可恢复的 Unix Socket 代理适配官方音乐服务，提供接管、恢复与健康检查；管理面板跟随 fnOS 主题。
 
-功能细节和默认设置见[播放与存储说明](docs/MUSIC_FEATURES.md)。当前仅支持 Go 原生网易云，未接入 musicdl、洛雪音源。
+功能细节和默认设置见[播放与存储说明](docs/MUSIC_FEATURES.md)。已加入 [Go 原生 QQ 音乐（实验性）](docs/QQ_MUSIC_NATIVE.md)，支持手机 QQ 扫码；公共推荐目前仍仅支持网易云。未接入 musicdl、洛雪音源。
 
 ## 运行条件
 
@@ -28,10 +28,12 @@
 | 运行权限 | 当前按 root 运行，由 fnOS 应用中心管理启停 |
 | FFmpeg | AAC/HLS、MP3 转码与封面嵌入需要设备提供可用 FFmpeg；FPK 不附带 |
 
-支持两种音源接入方式：
+支持以下原生音源：
 
 - **Go 原生网易云**：直接在管理面板添加账号并扫码登录，无需 Python、MusicBox 或 Docker。
-- 仅保留原生连接，账号在管理页扫码添加；不再支持 MusicBox HTTP 桥接及旧版桥接启动参数。
+- **Go 原生 QQ 音乐（实验性）**：选择 QQ 音乐并使用手机 QQ 扫码，详情及验证边界见 [QQ 音乐接入说明](docs/QQ_MUSIC_NATIVE.md)。
+
+账号在管理页扫码添加，不支持 MusicBox HTTP 桥接。
 
 ## 使用流程
 
@@ -66,7 +68,7 @@ npm run build
 
 ### 构建二进制与 FPK
 
-构建需要 Go、Node.js/npm 和 Python 3，生成 FPK 还需安装官方 `fnpack`。脚本会先通过锁文件安装前端依赖并构建页面，再交叉编译 Linux 二进制，可在 macOS 执行。
+构建需要 Go 1.27.3 或更高版本、Node.js 22.23.4 / 24.22.1 / 26.12.1 或相应系列更高安全版本、npm 和 Python 3，生成 FPK 还需安装官方 `fnpack`。构建脚本会先检查工具链安全版本。Go 二进制内嵌标准库，修复 CVE-2026-111943 必须重新编译并更新 FPK；仅升级 NAS 上的 Go 无效。Node.js 仅用于构建，不随 FPK 分发。脚本会先通过锁文件安装前端依赖并构建页面，再交叉编译 Linux 二进制，可在 macOS 执行。
 
 ```bash
 # 只构建前端和双架构二进制

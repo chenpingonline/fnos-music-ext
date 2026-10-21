@@ -1,29 +1,15 @@
 package netease
 
 import (
-	"context"
 	"encoding/json"
+	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 	"strconv"
 	"strings"
 )
 
-// QRLogin is an ephemeral NetEase QR challenge. It is never persisted.
-// The challenge key must remain server-side and is used only for polling.
-type QRLogin struct {
-	Key     string `json:"-"`
-	QRURL   string `json:"qr_url"`
-	QRASCII string `json:"qr_ascii,omitempty"`
-}
-type LoginState struct {
-	State    string `json:"state"` // pending|scanned|success|expired|unknown
-	LoggedIn bool   `json:"logged_in"`
-}
-
-type LoginAdapter interface {
-	BeginQRLogin(context.Context) (QRLogin, error)
-	CheckQRLogin(context.Context, string) (LoginState, error)
-	AuthStatus(context.Context) (LoginState, error)
-}
+type QRLogin = provider.QRLogin
+type LoginState = provider.LoginState
+type LoginAdapter = provider.LoginAdapter
 
 func unwrapObject(raw json.RawMessage) map[string]json.RawMessage {
 	var obj map[string]json.RawMessage

@@ -19,6 +19,7 @@ import (
 
 	"github.com/chenpingonline/fnos-music-ext/internal/netease"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
+	"github.com/chenpingonline/fnos-music-ext/internal/qqmusic"
 	"github.com/chenpingonline/fnos-music-ext/internal/userdir"
 )
 
@@ -33,7 +34,7 @@ var (
 type Account struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
-	BridgeURL  string `json:"bridge_url"` // Historical field name; only native://netease/<ID> is accepted.
+	BridgeURL  string `json:"bridge_url"` // Historical field name; only native NetEase/QQ Music identities are accepted.
 	CacheToken string `json:"cache_token,omitempty"`
 }
 type Config struct {
@@ -73,9 +74,17 @@ func New(path string, build Builder) (*Manager, error) {
 	draft := build
 	if build == nil {
 		build = func(u string) (provider.Adapter, error) {
+			if strings.HasPrefix(u, "native://qqmusic/") {
+				return qqmusic.New(u, filepath.Dir(path))
+			}
 			return netease.NewNative(u, filepath.Dir(path))
 		}
-		draft = func(u string) (provider.Adapter, error) { return netease.NewLoginDraft(u) }
+		draft = func(u string) (provider.Adapter, error) {
+			if strings.HasPrefix(u, "native://qqmusic/") {
+				return qqmusic.NewLoginDraft(u)
+			}
+			return netease.NewLoginDraft(u)
+		}
 	}
 
 	m := &Manager{lookupUser: userdir.Lookup, path: path, build: build, draft: draft, config: defaultConfig(), adapters: map[string]provider.Adapter{}}
@@ -142,8 +151,8 @@ func (m *Manager) validate(c Config) (map[string]provider.Adapter, error) {
 		if _, exists := adapters[a.ID]; exists {
 			return nil, ErrConflict
 		}
-		if a.BridgeURL != "native://netease/"+a.ID {
-			return nil, fmt.Errorf("%w: 仅支持原生网易云账号，地址须为 native://netease/<账号 ID>；旧桥接账号请移除后重新扫码添加", ErrInvalid)
+		if a.BridgeURL != "native://netease/"+a.ID && a.BridgeURL != "native://qqmusic/"+a.ID {
+			return nil, fmt.Errorf("%w: 仅支持原生网易云或 QQ 音乐账号；地址须与账号 ID 匹配，旧桥接账号请移除后重新扫码添加", ErrInvalid)
 		}
 		var adapter provider.Adapter
 		var err error
@@ -381,7 +390,9 @@ func (m *Manager) Remove(id string) error {
 	// Sessions are private to a native account ID. Revocation deletes the token;
 	// even re-adding the same account ID must not silently resurrect a login.
 	if err == nil {
-		_ = os.Remove(filepath.Join(filepath.Dir(m.path), "netease-sessions", id+".json"))
+		for _, dir := range []string{"netease-sessions", "qqmusic-sessions"} {
+			_ = os.Remove(filepath.Join(filepath.Dir(m.path), dir, id+".json"))
+		}
 	}
 	return err
 }
@@ -426,4 +437,21 @@ func (m *Manager) LookupAccount(id string) (provider.Adapter, string, bool) {
 		}
 	}
 	return nil, "", false
+}
+
+// RotateLoginToken invalidates cached data after an account is reauthenticated.
+func (m *Manager) RotateLoginToken(id string) error {
+	key := make([]byte, 16)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	return m.update(func(c *Config) error {
+		for i := range c.Accounts {
+			if c.Accounts[i].ID == id {
+				c.Accounts[i].CacheToken = hex.EncodeToString(key)
+				return nil
+			}
+		}
+		return ErrNotFound
+	})
 }

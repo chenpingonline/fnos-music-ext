@@ -1,14 +1,14 @@
-# 原生网易云账号管理
+# 原生音源账号管理
 
-当前仅支持 Go 原生网易云，搜索、播放、扫码登录和会话持久化均由扩展直接处理，无需额外服务。
+支持 Go 原生网易云与实验性 QQ 音乐。搜索、播放、扫码登录和会话持久化均由扩展直接处理，无需额外服务。QQ 音乐使用手机 QQ 扫码，详细范围见 [QQ 音乐说明](QQ_MUSIC_NATIVE.md)。
 
 ## 添加与登录
 
-在管理页点击“添加账号”，填写别名，使用网易云 App 扫码并确认。后端自动生成账号 ID；只有验证登录成功且凭证与配置保存成功后，账号才出现在列表中。取消、过期或保存失败不会留下半成品账号。
+在管理页点击“添加账号”，选择音乐平台、填写别名，使用对应客户端扫码并确认。后端自动生成账号 ID；只有验证登录成功且凭证与配置保存成功后，账号才出现在列表中。取消、过期或保存失败不会留下半成品账号。
 
-账号配置保存于 `${TRIM_PKGVAR}/accounts.json`，内部地址为 `native://netease/<账号 ID>`。为兼容已有原生配置，地址字段仍名为 `bridge_url`，但不再接受 HTTP 服务地址。
+账号配置保存于 `${TRIM_PKGVAR}/accounts.json`，内部地址为 `native://netease/<账号 ID>` 或 `native://qqmusic/<账号 ID>`。为兼容已有原生配置，地址字段仍名为 `bridge_url`，但不再接受 HTTP 服务地址。
 
-登录会话位于同目录的 `netease-sessions/<账号 ID>.json`，文件权限为 0600，目录权限为 0700。每个账号独立保存凭证。删除账号会清理对应凭证及用户绑定。
+登录会话按平台位于同目录的 `netease-sessions/<账号 ID>.json` 或 `qqmusic-sessions/<账号 ID>.json`，文件权限为 0600，目录权限为 0700。每个账号独立保存凭证。删除账号会清理对应凭证及用户绑定。
 
 ## 用户隔离与共享
 
@@ -20,7 +20,7 @@
 
 接口前缀为 `/app/fnmusic-go/api`，写入需管理员身份及 CSRF 校验。
 
-- `POST /account-enrollments`：提交 `{ "name": "家庭" }`，创建扫码草稿；可选的 `provider` 仅接受 `native`。
+- `POST /account-enrollments`：提交 `{ "name": "家庭" }`，创建扫码草稿；可选的 `provider` 接受 `native`/`netease`（网易云，默认）或 `qqmusic`。
 - `POST /account-enrollments/<id>/check`：检查授权，成功后持久化账号。
 - `DELETE /account-enrollments/<id>`：取消草稿。
 - `GET /accounts`：查询账号与访问设置。

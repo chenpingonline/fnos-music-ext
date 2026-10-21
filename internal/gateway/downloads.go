@@ -59,7 +59,7 @@ func (s *Gateway) downloadRoute(w http.ResponseWriter, r *http.Request) bool {
 		return ""
 	}
 	guid := value("trackGUID", "trackGuid", "guid")
-	id, online := fnmusic.DecodeNetEaseID(guid)
+	id, online := fnmusic.DecodeOnlineID(guid)
 	taskID := value("downloadId", "downloadID", "id")
 	if action == "prepare" && !online {
 		return false
@@ -82,6 +82,10 @@ func (s *Gateway) downloadRoute(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	if action == "prepare" {
+		if !trackSourceMatches(source, guid) {
+			http.Error(w, "track belongs to another source", 403)
+			return true
+		}
 		track, e := s.getTrack(r.Context(), user, source, scope, id)
 		if e != nil {
 			http.Error(w, "track unavailable", 502)

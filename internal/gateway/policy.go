@@ -102,7 +102,13 @@ func (g *Gateway) searchWindow(ctx context.Context, user provider.User, source p
 			seen["meta:"+trackKey(t)] = true
 		}
 		for _, t := range result.Tracks {
-			_, valid := fnmusic.EncodeNetEaseID(t.ID)
+			if t.Source == "" {
+				t.Source = source.ID()
+			}
+			_, valid := fnmusic.EncodeTrackID(t.Source, t.ID)
+			if t.Source != source.ID() {
+				continue
+			}
 			if !valid || !t.Playable || seen[t.ID] || seen["meta:"+trackKey(t)] {
 				continue
 			}

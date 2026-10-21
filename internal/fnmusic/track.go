@@ -43,7 +43,11 @@ func DecodeNetEaseID(guid string) (string, bool) {
 
 // TrackVO builds a field-compatible virtual track. It never writes trim.music DB.
 func TrackVO(t provider.Track, markSource bool) (map[string]any, bool) {
-	guid, ok := EncodeNetEaseID(t.ID)
+	source := t.Source
+	if source == "" {
+		source = "netease"
+	}
+	guid, ok := EncodeTrackID(source, t.ID)
 	if !ok {
 		return nil, false
 	}
@@ -67,7 +71,7 @@ func TrackVO(t provider.Track, markSource bool) (map[string]any, bool) {
 	if t.Audio != nil {
 		format, codec, size = t.Audio.Format, t.Audio.Codec, t.Audio.Size
 	}
-	path := "online/netease/" + guid
+	path := "online/" + source + "/" + guid
 	if format != "" {
 		path += "." + format
 	}
@@ -82,7 +86,7 @@ func TrackVO(t provider.Track, markSource bool) (map[string]any, bool) {
 		"guid": guid, "id": guid, "title": title, "name": title, "artist": artistName, "artists": artists, "album": album, "albumName": t.Album,
 		"audioSpec": spec, "duration": t.DurationMS, "duration_ms": t.DurationMS, "durationMs": t.DurationMS, "duration_s": float64(t.DurationMS) / 1000,
 		"codec": codec, "codecName": codec, "format": format, "ext": format, "size": size, "file_size": size,
-		"coverId": guid, "cover_url": t.CoverURL, "coverUrl": t.CoverURL, "coverURL": t.CoverURL, "source": "netease", "is_online": true,
+		"coverId": guid, "cover_url": t.CoverURL, "coverUrl": t.CoverURL, "coverURL": t.CoverURL, "source": source, "is_online": true,
 		"isFavorite": false, "isCue": false, "hasLyric": true, "genres": []any{}, "accessStatus": t.AccessStatus,
 	}, true
 }

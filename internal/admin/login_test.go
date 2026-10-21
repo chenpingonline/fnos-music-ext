@@ -42,6 +42,7 @@ func TestLoginAdminChallengeNeverLeaksAndOwnership(t *testing.T) {
 	if x := request("POST", "/auth/check", true); x.Code != 410 {
 		t.Fatal("unexpected no-session status", x.Code)
 	}
+	oldToken := m.Snapshot().Accounts[0].CacheToken
 	qr := request("POST", "/auth/qr", true)
 	if qr.Code != 200 || strings.Contains(qr.Body.String(), `"key"`) {
 		t.Fatal("challenge leaked", qr.Code, qr.Body.String())
@@ -51,6 +52,9 @@ func TestLoginAdminChallengeNeverLeaksAndOwnership(t *testing.T) {
 	}
 	if x := request("POST", "/auth/check", true); x.Code != 410 {
 		t.Fatal("stale challenge reused", x.Code)
+	}
+	if m.Snapshot().Accounts[0].CacheToken == oldToken {
+		t.Fatal("re-login retained old cache identity")
 	}
 	lists := request("GET", "/playlists", true)
 	if lists.Code != 200 {

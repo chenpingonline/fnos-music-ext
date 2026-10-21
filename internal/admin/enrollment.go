@@ -84,8 +84,10 @@ func (m *enrollmentManager) handle(w http.ResponseWriter, r *http.Request) bool 
 		}
 		a := accounts.Account{ID: "account_" + id, Name: strings.TrimSpace(req.Name)}
 		switch req.Provider {
-		case "", "native":
+		case "", "native", "netease":
 			a.BridgeURL = "native://netease/" + a.ID
+		case "qqmusic":
+			a.BridgeURL = "native://qqmusic/" + a.ID
 		default:
 			fail(w, accounts.ErrInvalid)
 			return true
@@ -120,7 +122,7 @@ func (m *enrollmentManager) handle(w http.ResponseWriter, r *http.Request) bool 
 			enrollmentError(w, err)
 			return true
 		}
-		respond(w, 201, map[string]string{"id": id, "qr_url": qr.QRURL})
+		respond(w, 201, map[string]string{"id": id, "qr_url": qr.QRURL, "qr_image": qr.QRImage})
 		return true
 	}
 	bits := strings.Split(strings.TrimPrefix(r.URL.Path, prefix+"/"), "/")
@@ -163,7 +165,7 @@ func (m *enrollmentManager) handle(w http.ResponseWriter, r *http.Request) bool 
 			enrollmentError(w, err)
 			return true
 		}
-		respond(w, 200, map[string]string{"qr_url": qr.QRURL})
+		respond(w, 200, map[string]string{"qr_url": qr.QRURL, "qr_image": qr.QRImage})
 	case "check":
 		if d.saved {
 			respond(w, 200, map[string]any{"state": "success", "logged_in": true, "saved": true})
@@ -178,7 +180,7 @@ func (m *enrollmentManager) handle(w http.ResponseWriter, r *http.Request) bool 
 			return true
 		}
 		d.checked = time.Now()
-		login := d.adapter.(netease.LoginAdapter)
+		login := d.adapter.(provider.LoginAdapter)
 		if !d.authorized {
 			state, err := login.CheckQRLogin(ctx, d.key)
 			if err != nil {
@@ -216,17 +218,17 @@ func (m *enrollmentManager) handle(w http.ResponseWriter, r *http.Request) bool 
 	}
 	return true
 }
-func (d *enrollment) begin(ctx context.Context) (netease.QRLogin, error) {
-	login, ok := d.adapter.(netease.LoginAdapter)
+func (d *enrollment) begin(ctx context.Context) (provider.QRLogin, error) {
+	login, ok := d.adapter.(provider.LoginAdapter)
 	if !ok {
-		return netease.QRLogin{}, errNoLoginAdapter
+		return provider.QRLogin{}, errNoLoginAdapter
 	}
 	qr, err := login.BeginQRLogin(ctx)
 	if err != nil {
 		return qr, err
 	}
 	if ctx.Err() != nil || d.ctx.Err() != nil {
-		return netease.QRLogin{}, errNoChallenge
+		return provider.QRLogin{}, errNoChallenge
 	}
 	d.key = qr.Key
 	d.expires = time.Now().Add(3 * time.Minute)

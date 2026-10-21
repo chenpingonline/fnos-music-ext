@@ -1,8 +1,8 @@
 import { computed, ref } from 'vue'
+import { renderLoginQR, accountSource, type QRChallenge } from './loginQR.ts'
 import { ApiError, errorMessage, request } from './api.ts'
 export type Account = {id: string; name: string; bridge_url: string}
 type LoginStatus = {state: string; logged_in: boolean}
-type QRChallenge = {qr_url: string; qr_ascii?: string}
 export type MusicPlaylist = {id: string; title: string; track_count: number; cover_url?: string}
 type MusicTrack = {id: string; title: string; artists: string[]}
 
@@ -61,13 +61,9 @@ export function useAccountPanel() {
     await run('qr', async (signal, current) => {
       const result = await request<QRChallenge>(endpoint('/auth/qr'), 'POST', {}, signal)
       if (!current()) return
-      const url = new URL(result.qr_url)
-      if (url.protocol !== 'https:' || url.hostname !== 'music.163.com') throw new Error('音源返回的登录链接无效，请重试。')
-      const {default: QRCode} = await import('qrcode')
+      const {image,marker} = await renderLoginQR(result,accountSource(account.value!.bridge_url))
       if (!current()) return
-      const image = await QRCode.toDataURL(url.href, {width: 224, margin: 3, errorCorrectionLevel: 'M', color:{dark:'#111111',light:'#ffffff'}})
-      if (!current()) return
-      clearQR(); expired.value = false; qrImage.value = image; qrURL.value = url.href
+      clearQR(); expired.value = false; qrImage.value = image; qrURL.value = marker
       auth.value = {state:'pending',logged_in:false}
       expiry = setTimeout(() => { if (current()) { clearQR(); expired.value = true; auth.value = {state:'expired',logged_in:false} } }, 180_000)
     })

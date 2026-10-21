@@ -87,11 +87,11 @@ func (g *Gateway) playbackRoute(w http.ResponseWriter, r *http.Request) bool {
 			}
 		}
 	}
-	id, ok := fnmusic.DecodeNetEaseID(guid)
+	id, ok := fnmusic.DecodeOnlineID(guid)
 	if !ok {
 		return false
 	}
-	guid, _ = fnmusic.EncodeNetEaseID(id)
+	guid = strings.TrimPrefix(guid, "track_")
 	if !userMutation(r) {
 		http.Error(w, "same-origin request required", 403)
 		return true
@@ -99,6 +99,10 @@ func (g *Gateway) playbackRoute(w http.ResponseWriter, r *http.Request) bool {
 	user, source, scope, ok := g.playlistSource(r)
 	if !ok {
 		http.Error(w, "verified music account required", 403)
+		return true
+	}
+	if !trackSourceMatches(source, guid) {
+		http.Error(w, "track belongs to another source", 403)
 		return true
 	}
 	if action == "file" && !playback.ValidFile(file) {

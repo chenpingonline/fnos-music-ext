@@ -44,7 +44,11 @@ func (g *Gateway) playlistSource(r *http.Request) (provider.User, provider.Adapt
 func (g *Gateway) ownedList(ctx context.Context, user provider.User, a provider.Adapter) ([]provider.Playlist, error) {
 	ctx, cancel := context.WithTimeout(ctx, 7*time.Second)
 	defer cancel()
-	return a.ListPlaylists(ctx, user)
+	lists, err := a.ListPlaylists(ctx, user)
+	for i := range lists {
+		lists[i].Source = a.ID()
+	}
+	return lists, err
 }
 func hasPlaylist(lists []provider.Playlist, id string) (provider.Playlist, bool) {
 	for _, p := range lists {

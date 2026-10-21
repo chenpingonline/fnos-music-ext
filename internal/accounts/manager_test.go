@@ -256,3 +256,32 @@ func TestRemovedBridgeConfigurationIsRejectedWithoutMutation(t *testing.T) {
 		t.Fatal("rejected configuration was modified", err)
 	}
 }
+
+func TestNativeQQAccountsUseIndependentSessions(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "private")
+	m, err := New(filepath.Join(root, "accounts.json"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := Account{ID: "qq", Name: "QQ", BridgeURL: "native://qqmusic/qq"}
+	if err = m.Add(a); err != nil {
+		t.Fatal(err)
+	}
+	adapter, _, ok := m.LookupAccount("qq")
+	if !ok || adapter.ID() != "qqmusic" {
+		t.Fatal("QQ source not selected")
+	}
+	if err = os.MkdirAll(filepath.Join(root, "qqmusic-sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	session := filepath.Join(root, "qqmusic-sessions", "qq.json")
+	if err = os.WriteFile(session, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.Remove("qq"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(session); !os.IsNotExist(err) {
+		t.Fatal("QQ credential not revoked")
+	}
+}

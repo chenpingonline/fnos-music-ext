@@ -9,6 +9,7 @@ case "${1:-all}" in
   *) echo 'usage: build-binaries.sh [all|x86|arm]' >&2; exit 1 ;;
 esac
 cd "$ROOT"
+bash "${ROOT}/scripts/check-toolchains.sh"
 npm ci --prefix web
 npm run build --prefix web
 for arch in "${architectures[@]}"; do

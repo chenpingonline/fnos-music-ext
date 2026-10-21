@@ -12,3 +12,7 @@
 
 - [Lucide](https://lucide.dev/)：管理界面线性图标，使用 `lucide-vue-next`，ISC 许可，包含 Feather 来源图标的 MIT 通知；完整许可随 npm 依赖提供，并保留于 [web/public/licenses/lucide.txt](web/public/licenses/lucide.txt)，构建后随前端资源一并嵌入。
 - 网易云音乐品牌图标：以用户提供的图标为参考重新绘制，移除截图外框并保留透明圆角背景，保存于 `web/src/assets/netease-cloud-music.png`；品牌名称及标志的权利归各自所有者。
+
+## QQ 音乐协议参考
+
+QQ 音乐协议和行为参考及固定提交见 [docs/QQ_MUSIC_NATIVE.md](docs/QQ_MUSIC_NATIVE.md)。Go 适配器独立实现，未复制、翻译或打包参考项目的源码文件。QQ 音乐品牌及资源权利归各自权利人。

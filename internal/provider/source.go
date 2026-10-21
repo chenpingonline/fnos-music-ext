@@ -7,6 +7,8 @@ import "strings"
 func SourceName(id string) string {
 	id = strings.TrimSpace(id)
 	switch id {
+	case "qqmusic":
+		return "QQ音乐"
 	case "netease":
 		return "网易云"
 	default:

@@ -166,7 +166,7 @@ func (g *Gateway) collectionRoute(w http.ResponseWriter, r *http.Request) bool {
 	}
 	relevant := false
 	for _, guid := range guids {
-		if _, ok := fnmusic.DecodeNetEaseID(guid); ok {
+		if _, ok := fnmusic.DecodeOnlineID(guid); ok {
 			relevant = true
 		}
 	}
@@ -197,7 +197,11 @@ func (g *Gateway) collectionRoute(w http.ResponseWriter, r *http.Request) bool {
 	officialIDs := []string{}
 	onlineIDs := []string{}
 	for _, guid := range guids {
-		if id, ok := fnmusic.DecodeNetEaseID(guid); ok {
+		if id, ok := fnmusic.DecodeOnlineID(guid); ok {
+			if !trackSourceMatches(source, guid) {
+				http.Error(w, "track belongs to another source", 403)
+				return true
+			}
 			onlineIDs = append(onlineIDs, id)
 		} else {
 			officialIDs = append(officialIDs, guid)

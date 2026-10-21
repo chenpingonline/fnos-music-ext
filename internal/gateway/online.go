@@ -180,7 +180,7 @@ func onlineGUID(r *http.Request) (string, string, bool) {
 			guid = segments[len(segments)-1]
 		}
 	}
-	id, ok := fnmusic.DecodeNetEaseID(guid)
+	id, ok := fnmusic.DecodeOnlineID(guid)
 	return id, strings.TrimPrefix(guid, "track_"), ok
 }
 func (g *Gateway) serveOnline(w http.ResponseWriter, r *http.Request) bool {
@@ -403,6 +403,14 @@ func (g *Gateway) getTrack(ctx context.Context, user provider.User, source provi
 	}
 	t, e := source.GetTrack(ctx, user, id)
 	if e == nil {
+		if t.Source == "" {
+			t.Source = source.ID()
+		}
+		if t.Source != source.ID() || t.ID != id {
+			return provider.Track{}, provider.ErrNotEntitled
+		}
+	}
+	if e == nil {
 		g.cache.put(accountID+":"+id, t)
 	}
 	return t, e
@@ -420,6 +428,10 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 	source, accountID, allowed := g.sourceFor(user)
 	if !allowed {
 		http.Error(w, "no music account selected for this fnOS user", http.StatusForbidden)
+		return true
+	}
+	if !trackSourceMatches(source, guid) {
+		http.Error(w, "track belongs to another source", 403)
 		return true
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
@@ -570,4 +582,9 @@ func (g *Gateway) OnlineEnabled() bool {
 func (g *Gateway) CurrentOwner() string { return g.ownerGUID }
 func (g *Gateway) SearchURL(query string) string {
 	return (&url.URL{Path: "/music/api/v1/search/track", RawQuery: url.Values{"q": {query}}.Encode()}).String()
+}
+
+func trackSourceMatches(source provider.Adapter, guid string) bool {
+	name, _, ok := fnmusic.DecodeTrackID(guid)
+	return ok && source != nil && name == source.ID()
 }

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/chenpingonline/fnos-music-ext/internal/accounts"
-	"github.com/chenpingonline/fnos-music-ext/internal/netease"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 )
 
@@ -17,6 +16,7 @@ var errNoLoginAdapter = errors.New("the configured source does not support QR lo
 
 type loginChallenge struct {
 	key, url             string
+	authorized           bool
 	expires, timeChecked time.Time
 }
 type loginManager struct {
@@ -28,7 +28,7 @@ type loginManager struct {
 func newLoginManager(m *accounts.Manager) *loginManager {
 	return &loginManager{sessions: map[string]loginChallenge{}, accounts: m}
 }
-func (l *loginManager) adapter(id string) (netease.LoginAdapter, string, error) {
+func (l *loginManager) adapter(id string) (provider.LoginAdapter, string, error) {
 	if l.accounts == nil {
 		return nil, "", accounts.ErrNotFound
 	}
@@ -36,16 +36,16 @@ func (l *loginManager) adapter(id string) (netease.LoginAdapter, string, error) 
 	if !ok {
 		return nil, "", accounts.ErrNotFound
 	}
-	v, ok := a.(netease.LoginAdapter)
+	v, ok := a.(provider.LoginAdapter)
 	if !ok {
 		return nil, "", errNoLoginAdapter
 	}
 	return v, u, nil
 }
-func (l *loginManager) begin(ctx context.Context, id string) (netease.QRLogin, error) {
+func (l *loginManager) begin(ctx context.Context, id string) (provider.QRLogin, error) {
 	a, u, err := l.adapter(id)
 	if err != nil {
-		return netease.QRLogin{}, err
+		return provider.QRLogin{}, err
 	}
 	qr, err := a.BeginQRLogin(ctx)
 	if err != nil {
@@ -54,7 +54,7 @@ func (l *loginManager) begin(ctx context.Context, id string) (netease.QRLogin, e
 	// Configuration may change while the HTTP request is in flight.
 	_, current, err := l.adapter(id)
 	if err != nil || current != u {
-		return netease.QRLogin{}, errNoChallenge
+		return provider.QRLogin{}, errNoChallenge
 	}
 	l.mu.Lock()
 	l.sessions[id] = loginChallenge{key: qr.Key, url: u, expires: time.Now().Add(3 * time.Minute)}
@@ -62,28 +62,46 @@ func (l *loginManager) begin(ctx context.Context, id string) (netease.QRLogin, e
 	qr.Key = "" // unikey never reaches the browser as an API field
 	return qr, nil
 }
-func (l *loginManager) poll(ctx context.Context, id string) (netease.LoginState, error) {
+func (l *loginManager) poll(ctx context.Context, id string) (provider.LoginState, error) {
 	a, u, err := l.adapter(id)
 	if err != nil {
-		return netease.LoginState{}, err
+		return provider.LoginState{}, err
 	}
 	l.mu.Lock()
 	s, ok := l.sessions[id]
 	if !ok || s.url != u || time.Now().After(s.expires) {
 		delete(l.sessions, id)
 		l.mu.Unlock()
-		return netease.LoginState{}, errNoChallenge
+		return provider.LoginState{}, errNoChallenge
 	}
 	if time.Since(s.timeChecked) < 2*time.Second {
 		l.mu.Unlock()
-		return netease.LoginState{}, errPollFast
+		return provider.LoginState{}, errPollFast
 	}
 	s.timeChecked = time.Now()
 	l.sessions[id] = s
 	l.mu.Unlock()
-	status, err := a.CheckQRLogin(ctx, s.key)
-	if err != nil {
-		return netease.LoginState{}, err
+	status := provider.LoginState{State: "success", LoggedIn: true}
+	if !s.authorized {
+		status, err = a.CheckQRLogin(ctx, s.key)
+		if err != nil {
+			return provider.LoginState{}, err
+		}
+	}
+	if status.State == "success" && status.LoggedIn {
+		l.mu.Lock()
+		latest, current := l.sessions[id]
+		if current && latest.key == s.key {
+			latest.authorized = true
+			l.sessions[id] = latest
+		}
+		l.mu.Unlock()
+		if !current || latest.key != s.key {
+			return provider.LoginState{}, errNoChallenge
+		}
+		if err = l.accounts.RotateLoginToken(id); err != nil {
+			return provider.LoginState{}, err
+		}
 	}
 	if status.State == "success" || status.State == "expired" {
 		l.mu.Lock()
@@ -94,10 +112,10 @@ func (l *loginManager) poll(ctx context.Context, id string) (netease.LoginState,
 	}
 	return status, nil
 }
-func (l *loginManager) status(ctx context.Context, id string) (netease.LoginState, error) {
+func (l *loginManager) status(ctx context.Context, id string) (provider.LoginState, error) {
 	a, _, err := l.adapter(id)
 	if err != nil {
-		return netease.LoginState{}, err
+		return provider.LoginState{}, err
 	}
 	return a.AuthStatus(ctx)
 }

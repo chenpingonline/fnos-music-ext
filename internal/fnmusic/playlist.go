@@ -38,9 +38,13 @@ func PlaylistVO(scope string, p provider.Playlist) (map[string]any, bool) {
 	if !ok {
 		return nil, false
 	}
-	description := "网易云自建歌单（只读）"
+	name := provider.SourceName(p.Source)
+	if name == "" {
+		name = "网易云"
+	}
+	description := name + "自建歌单（只读）"
 	if p.Kind == "public" {
-		description = "网易云公共歌单（只读）"
+		description = name + "公共歌单（只读）"
 	}
 	if p.Kind == "recommend" {
 		description = "推荐歌单（只读）"
