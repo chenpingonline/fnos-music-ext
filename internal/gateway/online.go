@@ -62,6 +62,7 @@ func (g *Gateway) SetOnline(source provider.Adapter, ownerGUID string) {
 	g.listMu.Unlock()
 	g.searchMu.Lock()
 	g.searches = nil
+	g.rankedSearches = nil
 	g.searchMu.Unlock()
 	g.recoMu.Lock()
 	g.recommendations = nil
@@ -282,112 +283,38 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 		writeOfficial(w, resp, b)
 		return true
 	}
-	localTotal := body.Data.Total
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(g.policy().SearchTimeout)*time.Second)
+	defer cancel()
+	rows, err := g.rankedSearch(ctx, r, user, source, accountID, keyword)
+	if err != nil {
+		diagnostics.Record("search", accountID, err)
+		writeOfficial(w, resp, b)
+		return true
+	}
 	start := (page - 1) * size
+	if start > len(rows) {
+		start = len(rows)
+	}
 	end := start + size
-	localPage := body.Data.List
-	if start >= localTotal {
-		localPage = nil
-	} else if len(localPage) > size { // official server sometimes ignores page/size
-		lo := start
-		if lo > len(localPage) {
-			lo = len(localPage)
-		}
-		hi := end
-		if hi > len(localPage) {
-			hi = len(localPage)
-		}
-		localPage = localPage[lo:hi]
+	if end > len(rows) {
+		end = len(rows)
 	}
-	if len(localPage) > size {
-		localPage = localPage[:size]
-	}
-	onlineStart := start - localTotal
-	if onlineStart < 0 {
-		onlineStart = 0
-	}
-	remaining := size - len(localPage)
-	if remaining < 0 {
-		remaining = 0
-	}
-	// The search page must be stable even if the provider is slow or unavailable.
-	// Keep the first response local; online errors never alter official semantics.
-	var items []json.RawMessage
-	onlineTotal := 0
-	if remaining >= 0 {
-		fetchLimit := remaining
-		if fetchLimit == 0 {
-			fetchLimit = 1
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(g.policy().SearchTimeout)*time.Second)
-		result, e := g.searchWindow(ctx, user, source, accountID, keyword, onlineStart, fetchLimit)
-		cancel()
-		if e != nil {
-			diagnostics.Record("search", accountID, e)
-			writeOfficial(w, resp, b)
-			return true
-		}
-		onlineTotal = result.Total
-		seen := make(map[string]bool)
-		for _, local := range localPage {
-			var m struct {
-				Title  string `json:"title"`
-				Artist string `json:"artist"`
-			}
-			_ = json.Unmarshal(local, &m)
-			seen[strings.ToLower(m.Title)+"\x00"+strings.ToLower(m.Artist)] = true
-		}
-		for _, t := range result.Tracks {
-			if remaining == 0 {
-				break
-			}
-			if !t.Playable {
-				continue
-			}
-			key := strings.ToLower(t.Title) + "\x00" + strings.ToLower(strings.Join(t.Artists, " "))
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			vo, valid := g.trackVO(user, accountID, t, true)
-			if !valid {
-				continue
-			}
-			raw, e := json.Marshal(vo)
-			if e != nil {
-				continue
-			}
-			items = append(items, raw)
-			g.cache.put(accountID+":"+t.ID, t)
-		}
-	}
-	if len(items) == 0 && start < localTotal { // Still publish online total to enable subsequent pages.
-	}
-	// Preserve unrelated fields in the official JSON by editing only list/total.
+	// Preserve official envelope fields while replacing only list and total.
 	var envelope map[string]json.RawMessage
-	if json.Unmarshal(b, &envelope) != nil {
-		writeOfficial(w, resp, b)
-		return true
-	}
 	var data map[string]json.RawMessage
-	if json.Unmarshal(envelope["data"], &data) != nil {
+	if json.Unmarshal(b, &envelope) != nil || json.Unmarshal(envelope["data"], &data) != nil || data == nil {
 		writeOfficial(w, resp, b)
 		return true
 	}
-	merged := append(append(make([]json.RawMessage, 0, len(localPage)+len(items)), localPage...), items...)
-	raw, _ := json.Marshal(merged)
-	data["list"] = raw
-	if onlineTotal < onlineStart+len(items) {
-		onlineTotal = onlineStart + len(items)
-	}
-	count, _ := json.Marshal(localTotal + onlineTotal)
-	data["total"] = count
+	data["list"], _ = json.Marshal(rows[start:end])
+	data["total"], _ = json.Marshal(len(rows))
 	envelope["data"], _ = json.Marshal(data)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
 	_ = json.NewEncoder(w).Encode(envelope)
 	return true
 }
+
 func writeOfficial(w http.ResponseWriter, resp *http.Response, b []byte) {
 	for _, k := range []string{"Content-Type", "Cache-Control"} {
 		if v := resp.Header.Get(k); v != "" {

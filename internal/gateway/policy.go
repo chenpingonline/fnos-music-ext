@@ -154,5 +154,5 @@ func (g *Gateway) searchWindow(ctx context.Context, user provider.User, source p
 	return provider.SearchPage{Tracks: append([]provider.Track{}, pool.tracks[lo:hi]...), Total: total, HasMore: hi < total}, nil
 }
 func trackKey(t provider.Track) string {
-	return strings.ToLower(strings.TrimSpace(t.Title)) + "\x00" + strings.ToLower(strings.Join(t.Artists, " "))
+	return strings.ToLower(strings.TrimSpace(t.Title)) + "\x00" + strings.ToLower(strings.Join(t.Artists, " ")) + "\x00" + strings.ToLower(strings.TrimSpace(t.Album)) + fmt.Sprintf("\x00%d", t.DurationMS)
 }

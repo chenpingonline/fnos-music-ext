@@ -49,6 +49,7 @@ type Gateway struct {
 	settings        *preferences.Store
 	searchMu        sync.Mutex
 	searches        map[string]*searchPool
+	rankedSearches  map[string]*rankedSearchPool
 	recoMu          sync.Mutex
 	recommendations map[string]recommendationCache
 }
