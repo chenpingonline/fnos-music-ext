@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/chenpingonline/fnos-music-ext/internal/fnmusic"
+	"github.com/chenpingonline/fnos-music-ext/internal/library"
 	"io"
 	"net/http"
 	"net/url"
@@ -144,7 +145,7 @@ func (g *Gateway) collectionRoute(w http.ResponseWriter, r *http.Request) bool {
 	}
 	g.remember(u, r)
 	if playlist != "favorites" {
-		if _, _, virtual := decodeList(scope, playlist); virtual {
+		if _, _, virtual := g.playlistAccount(u, playlist); virtual {
 			if mutation {
 				writeJSON(w, 409, map[string]any{"code": -1, "msg": "此歌单只读"})
 				return true
@@ -171,7 +172,7 @@ func (g *Gateway) collectionRoute(w http.ResponseWriter, r *http.Request) bool {
 		}
 	}
 	if !relevant && !add {
-		for _, entry := range g.ledger.List(u.FnOSGUID, scope, playlist) {
+		for _, entry := range g.collectionEntries(u, playlist) {
 			for _, guid := range guids {
 				if entry.Bound != "" && entry.Bound == guid {
 					relevant = true
@@ -197,12 +198,12 @@ func (g *Gateway) collectionRoute(w http.ResponseWriter, r *http.Request) bool {
 	officialIDs := []string{}
 	onlineIDs := []string{}
 	for _, guid := range guids {
-		if id, ok := fnmusic.DecodeOnlineID(guid); ok {
-			if !trackSourceMatches(source, guid) {
+		if _, ok := fnmusic.DecodeOnlineID(guid); ok {
+			if _, _, allowed := g.trackSource(u, guid); !allowed {
 				http.Error(w, "track belongs to another source", 403)
 				return true
 			}
-			onlineIDs = append(onlineIDs, id)
+			onlineIDs = append(onlineIDs, guid)
 		} else {
 			officialIDs = append(officialIDs, guid)
 		}
@@ -227,10 +228,10 @@ func (g *Gateway) collectionRoute(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		if !add {
-			for _, entry := range g.ledger.List(u.FnOSGUID, scope, playlist) {
+			for _, entry := range g.collectionEntries(u, playlist) {
 				for _, guid := range officialIDs {
 					if entry.Bound != "" && entry.Bound == guid {
-						if e = g.ledger.Set(u.FnOSGUID, scope, playlist, entry.Track, false, false); e != nil {
+						if e = g.ledger.Set(u.FnOSGUID, entry.Scope, playlist, entry.Track, false, false); e != nil {
 							g.bindWrites.Unlock()
 							http.Error(w, "collection write failed", 500)
 							return true
@@ -242,7 +243,13 @@ func (g *Gateway) collectionRoute(w http.ResponseWriter, r *http.Request) bool {
 		g.bindWrites.Unlock()
 	}
 
-	for _, id := range onlineIDs {
+	for _, guid := range onlineIDs {
+		id, _ := fnmusic.DecodeOnlineID(guid)
+		source, scope, allowed := g.trackSource(u, guid)
+		if !allowed {
+			http.Error(w, "account access changed", 403)
+			return true
+		}
 		track, e := g.updateCollection(r, u, source, scope, playlist, id, add)
 		if e != nil {
 			writeJSON(w, 502, map[string]any{"code": -1, "msg": e.Error()})
@@ -285,7 +292,7 @@ func (g *Gateway) ownsOfficialPlaylist(ctx context.Context, h http.Header, u pro
 	return owner.GUID == u.FnOSGUID
 }
 func (g *Gateway) collectionList(w http.ResponseWriter, r *http.Request, u provider.User, source provider.Adapter, scope, playlist string) bool {
-	entries := g.ledger.List(u.FnOSGUID, scope, playlist)
+	entries := g.collectionEntries(u, playlist)
 	if len(entries) == 0 {
 		return false
 	}
@@ -310,6 +317,7 @@ func (g *Gateway) collectionList(w http.ResponseWriter, r *http.Request, u provi
 	online := []json.RawMessage{}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Created.After(entries[j].Created) })
 	for _, entry := range entries {
+		scope := entry.Scope
 		if entry.Bound != "" {
 			continue
 		}
@@ -465,7 +473,7 @@ func (g *Gateway) scheduleBind(u provider.User, scope, playlist, id, jobID strin
 			if !ok || current.Revision != entry.Revision || !current.Pending || !g.policy().AutoBind {
 				return
 			}
-			if _, currentScope, ok := g.sourceFor(u); !ok || currentScope != scope {
+			if !g.scopeAuthorized(u, scope) {
 				fail("账号访问已变化，绑定已停止")
 				return
 			}
@@ -607,4 +615,12 @@ func (g *Gateway) trackVO(u provider.User, scope string, t provider.Track, mark 
 		vo["isFavorite"] = favorite
 	}
 	return vo, ok
+}
+
+func (g *Gateway) collectionEntries(u provider.User, playlist string) []library.Entry {
+	entries := []library.Entry{}
+	for _, s := range g.sourcesFor(u) {
+		entries = append(entries, g.ledger.List(u.FnOSGUID, s.Scope, playlist)...)
+	}
+	return entries
 }

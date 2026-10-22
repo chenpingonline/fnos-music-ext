@@ -10,7 +10,7 @@ import (
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 )
 
-// Playlist IDs are scoped to the chosen NetEase account (including its source
+// Playlist IDs are scoped to the chosen music account (including its source
 // address). Switching accounts cannot decode previous users' playlist IDs.
 func EncodePlaylistID(scope, id string) (string, bool) {
 	n, e := strconv.ParseUint(id, 10, 64)

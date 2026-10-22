@@ -77,6 +77,9 @@ func (s *Gateway) downloadRoute(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	source, scope, ok := s.sourceFor(user)
+	if action == "prepare" {
+		source, scope, ok = s.trackSource(user, guid)
+	}
 	if !ok {
 		http.Error(w, "music account required", 403)
 		return true
@@ -105,6 +108,15 @@ func (s *Gateway) downloadRoute(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	job, ok := s.media.Lookup(taskID, user.FnOSGUID, scope)
+	if !ok {
+		for _, candidate := range s.sourcesFor(user) {
+			if found, exists := s.media.Lookup(taskID, user.FnOSGUID, candidate.Scope); exists {
+				job = found
+				ok = true
+				break
+			}
+		}
+	}
 	if !ok {
 		http.Error(w, "task not found", 404)
 		return true

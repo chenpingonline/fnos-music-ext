@@ -1,4 +1,4 @@
-// Package accounts persists native NetEase accounts and resolves which account
+// Package accounts persists native music accounts and resolves which account
 // a verified fnOS user may access.
 package accounts
 
@@ -38,6 +38,7 @@ type Account struct {
 	CacheToken string `json:"cache_token,omitempty"`
 }
 type Config struct {
+	AccountGroups   map[string][]string `json:"account_groups,omitempty"`
 	UserBindingUIDs map[string]string   `json:"user_binding_uids"`
 	UserBindings    map[string]string   `json:"user_bindings"`
 	Identities      map[string]Identity `json:"user_identities"`
@@ -205,10 +206,14 @@ func (m *Manager) validate(c Config) (map[string]provider.Adapter, error) {
 			return nil, ErrInvalid
 		}
 	}
+	if err := validateGroups(c); err != nil {
+		return nil, err
+	}
 	return adapters, nil
 }
 func clone(c Config) Config {
 	copy := c
+	copy.AccountGroups = cloneGroups(c.AccountGroups)
 	copy.UserBindingUIDs = make(map[string]string, len(c.UserBindingUIDs))
 	for k, v := range c.UserBindingUIDs {
 		copy.UserBindingUIDs[k] = v
@@ -371,6 +376,16 @@ func (m *Manager) Remove(id string) error {
 			return ErrNotFound
 		}
 		c.Accounts = out
+		delete(c.AccountGroups, id)
+		for primary, group := range c.AccountGroups {
+			next := []string{}
+			for _, member := range group {
+				if member != id {
+					next = append(next, member)
+				}
+			}
+			c.AccountGroups[primary] = next
+		}
 		for name, account := range c.UserBindings {
 			if account == id {
 				delete(c.UserBindings, name)

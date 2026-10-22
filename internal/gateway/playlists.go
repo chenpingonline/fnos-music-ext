@@ -38,6 +38,14 @@ func (g *Gateway) playlistSource(r *http.Request) (provider.User, provider.Adapt
 	if !ok {
 		return provider.User{}, nil, "", false
 	}
+	guid := requestMusicGUID(r)
+	if _, _, track := fnmusic.DecodeTrackID(guid); track {
+		source, scope, ok := g.trackSource(user, guid)
+		return user, source, scope, ok
+	}
+	if source, scope, ok := g.playlistAccount(user, guid); ok {
+		return user, source, scope, true
+	}
 	source, account, ok := g.sourceFor(user)
 	return user, source, account, ok
 }
@@ -67,7 +75,7 @@ func playlistGUID(r *http.Request) string {
 	return ""
 }
 func (g *Gateway) playlistList(w http.ResponseWriter, r *http.Request) bool {
-	user, src, scope, ok := g.playlistSource(r)
+	user, _, _, ok := g.playlistSource(r)
 	if !ok {
 		return false
 	}
@@ -122,14 +130,14 @@ func (g *Gateway) playlistList(w http.ResponseWriter, r *http.Request) bool {
 	if json.Unmarshal(data["total"], &oldTotal) != nil || oldTotal < 0 {
 		oldTotal = len(existing)
 	}
-	playlists, err := g.availableLists(r.Context(), user, src, scope)
+	playlists, err := g.selectedLists(r.Context(), user)
 	if err != nil || len(playlists) == 0 {
 		writeOfficial(w, resp, body)
 		return true
 	}
 	cards := make([]json.RawMessage, 0, len(playlists))
 	for _, p := range playlists {
-		if v, ok := fnmusic.PlaylistVO(cardScope(scope, p), p); ok {
+		if v, ok := g.playlistVO(user, p.Scope, p.Playlist); ok {
 			raw, _ := json.Marshal(v)
 			cards = append(cards, raw)
 		}
@@ -173,7 +181,7 @@ func (g *Gateway) playlistDetail(w http.ResponseWriter, r *http.Request) bool {
 		}
 		p.TrackCount = count
 	}
-	card, _ := fnmusic.PlaylistVO(cardScope(scope, p), p)
+	card, _ := g.playlistVO(user, scope, p)
 	writeJSON(w, 200, map[string]any{"code": 0, "msg": "ok", "data": card})
 	return true
 }

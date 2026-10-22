@@ -21,6 +21,8 @@ type Selection struct {
 	Kind     string `json:"kind"`
 }
 type Config struct {
+	SearchSources      []string            `json:"search_sources"`
+	PlaylistSources    []string            `json:"playlist_sources"`
 	PersonalSelections map[string][]string `json:"personal_selections,omitempty"`
 	Quality            string              `json:"quality"`
 	DownloadQuality    string              `json:"download_quality"`
@@ -80,6 +82,8 @@ func (s *Store) Snapshot() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c := s.config
+	c.SearchSources = cloneSources(c.SearchSources)
+	c.PlaylistSources = cloneSources(c.PlaylistSources)
 	c.Public = append([]Selection{}, c.Public...)
 	c.PersonalSelections = clonePersonalSelections(c.PersonalSelections)
 	return c
@@ -97,6 +101,8 @@ func (s *Store) Update(c Config) error {
 		}
 	}
 	s.config = c
+	s.config.SearchSources = cloneSources(c.SearchSources)
+	s.config.PlaylistSources = cloneSources(c.PlaylistSources)
 	s.config.Public = append([]Selection{}, c.Public...)
 	s.config.PersonalSelections = clonePersonalSelections(c.PersonalSelections)
 	s.revision++
@@ -113,6 +119,15 @@ func clonePersonalSelections(source map[string][]string) map[string][]string {
 	return result
 }
 func Validate(c Config) error {
+	for _, list := range [][]string{c.SearchSources, c.PlaylistSources} {
+		seen := map[string]bool{}
+		for _, id := range list {
+			if (id != "netease" && id != "qqmusic") || seen[id] {
+				return errors.New("音源选项无效")
+			}
+			seen[id] = true
+		}
+	}
 	if len(c.PersonalSelections) > 100 {
 		return errors.New("个人歌单筛选最多支持 100 个账号")
 	}
@@ -243,4 +258,11 @@ func ReadPrivate(path string) ([]byte, error) {
 	}
 	defer f.Close()
 	return io.ReadAll(io.LimitReader(f, 16<<20))
+}
+
+func cloneSources(v []string) []string {
+	if v == nil {
+		return nil
+	}
+	return append([]string{}, v...)
 }

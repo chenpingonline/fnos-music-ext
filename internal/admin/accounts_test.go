@@ -48,6 +48,22 @@ func TestAccountAdminAPI(t *testing.T) {
 	if w := call("PUT", "/accounts/bindings/alice", `{"account_id":"a"}`, true); w.Code != 200 {
 		t.Fatal("binding", w.Code)
 	}
+
+	if w := call("POST", "/accounts", `{"id":"qq","name":"QQ","bridge_url":"native://qqmusic/qq"}`, true); w.Code != 201 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := call("PUT", "/accounts/groups/a", `{"account_ids":["qq"]}`, false); w.Code != 403 {
+		t.Fatal("group privilege bypass", w.Code)
+	}
+	if w := call("PUT", "/accounts/groups/a", `{"account_ids":["qq"]}`, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if len(m.Snapshot().AccountGroups["a"]) != 1 {
+		t.Fatal("group not saved")
+	}
+	if w := call("PUT", "/accounts/groups/qq", `{"account_ids":["qq"]}`, true); w.Code != 400 {
+		t.Fatal("invalid group accepted", w.Code)
+	}
 	if w := call("DELETE", "/accounts/a", `{}`, true); w.Code != 200 {
 		t.Fatal("delete", w.Code)
 	}

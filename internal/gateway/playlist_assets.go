@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chenpingonline/fnos-music-ext/internal/fnmusic"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 )
 
@@ -19,7 +18,7 @@ import (
 // Resolve only playlists visible to the authenticated user's current account;
 // mixed requests retain their official records and response fields.
 func (g *Gateway) playlistBatchDetail(w http.ResponseWriter, r *http.Request) bool {
-	user, source, scope, ok := g.playlistSource(r)
+	user, _, _, ok := g.playlistSource(r)
 	if !ok {
 		return false
 	}
@@ -42,7 +41,7 @@ func (g *Gateway) playlistBatchDetail(w http.ResponseWriter, r *http.Request) bo
 		if id == "" {
 			continue
 		}
-		if _, _, ok := decodeList(scope, strings.TrimPrefix(id, "track_")); ok {
+		if _, _, ok := g.playlistAccount(user, id); ok {
 			local = append(local, id)
 		} else {
 			official = append(official, id)
@@ -94,9 +93,9 @@ func (g *Gateway) playlistBatchDetail(w http.ResponseWriter, r *http.Request) bo
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
-	lists, err := g.availableLists(ctx, user, source, scope)
+	lists, err := g.selectedLists(ctx, user)
 	if err != nil {
-		diagnostics.Record("playlist-source", scope, err)
+		diagnostics.Record("playlist-source", "selected", err)
 		http.Error(w, "playlist source unavailable", 502)
 		return true
 	}
@@ -108,15 +107,21 @@ func (g *Gateway) playlistBatchDetail(w http.ResponseWriter, r *http.Request) bo
 			continue
 		}
 		seen[guid] = true
-		id, kind, _ := decodeList(scope, guid)
-		if p, found := hasTypedPlaylist(lists, id, kind); found {
+		for _, entry := range lists {
+			p := entry.Playlist
+			scope := entry.Scope
+			source := entry.Source
+			id, kind, match := decodeList(scope, guid)
+			if !match || p.ID != id || p.Kind != kind {
+				continue
+			}
 			if p.TrackCount == 0 {
 				if count, err := g.listTrackCount(ctx, user, source, scope, p); err == nil {
 					p.TrackCount = count
 				}
 			}
 
-			if card, ok := fnmusic.PlaylistVO(cardScope(scope, p), p); ok {
+			if card, ok := g.playlistVO(user, scope, p); ok {
 				encoded, _ := json.Marshal(card)
 				cards = append(cards, encoded)
 			}

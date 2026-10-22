@@ -131,6 +131,9 @@ func New(c Config) http.Handler {
 			if handleUsers(w, r, c) {
 				return
 			}
+			if handleGroups(w, r, c) {
+				return
+			}
 			if handleMusic(w, r, c) {
 				return
 			}

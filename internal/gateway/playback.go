@@ -96,7 +96,11 @@ func (g *Gateway) playbackRoute(w http.ResponseWriter, r *http.Request) bool {
 		http.Error(w, "same-origin request required", 403)
 		return true
 	}
-	user, source, scope, ok := g.playlistSource(r)
+	user, authed := g.identify(r.Context(), r)
+	source, scope, ok := g.trackSource(user, guid)
+	if !authed {
+		ok = false
+	}
 	if !ok {
 		http.Error(w, "verified music account required", 403)
 		return true

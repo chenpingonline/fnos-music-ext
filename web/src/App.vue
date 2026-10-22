@@ -14,7 +14,7 @@ import AppDialog from './components/AppDialog.vue'
 import MusicSettings from './components/MusicSettings.vue'
 import './app.css'
 
-type Config = {isolation: boolean; shared_account: string; accounts: Account[]; bindings: Record<string,string>;user_bindings?:Record<string,string>;user_identities?:Record<string,{username:string;uid:string}>}
+type Config = {account_groups?:Record<string,string[]>;isolation: boolean; shared_account: string; accounts: Account[]; bindings: Record<string,string>;user_bindings?:Record<string,string>;user_identities?:Record<string,{username:string;uid:string}>}
 type Status = {version: string; checked_at?: string; socket: {journal: boolean; target_state?: {connected?: boolean}; upstream_state?: {connected?: boolean}}}
 type Page = 'accounts' | 'access' | 'status' | 'help' | 'music' | 'recommend' | 'storage' | 'tasks'
 const settingsRef=ref<InstanceType<typeof MusicSettings>>()
@@ -34,6 +34,7 @@ const pages: {id: Page; label: string; icon: string; description: string}[] = [
 const navGroups = [{label:'音乐', pages:pages.slice(0,5)}, {label:'管理', pages:pages.slice(5)}]
 const selected = ref<Page>('accounts')
 const currentPage = computed(() => pages.find(page => page.id === selected.value)!)
+const groupPrimary=ref(''), groupMembers=ref<string[]>([])
 const config = ref<Config>({isolation:true,shared_account:'',accounts:[],bindings:{}})
 const state = ref<Status | null>(null)
 const loaded = ref(false), refreshing = ref(false), operation = ref(''), error = ref(''), notice = ref('')
@@ -73,9 +74,13 @@ const checkedTime = computed(() => state.value?.checked_at ? new Date(state.valu
 function accountUsers(account: Account) {
   return Object.values(config.value.bindings).filter(id=>id===account.id).length + Object.values(config.value.user_bindings??{}).filter(id=>id===account.id).length
 }
+const groupCandidates=computed(()=>config.value.accounts.filter(a=>a.id!==groupPrimary.value&&accountSource(a.bridge_url)!==accountSource(config.value.accounts.find(x=>x.id===groupPrimary.value)?.bridge_url??'')))
+function readGroup(){groupMembers.value=[...(config.value.account_groups?.[groupPrimary.value]??[])]}
+watch(groupPrimary,readGroup)
+async function saveGroup(){if(!groupPrimary.value)return;if(await mutate('group','/accounts/groups/'+encodeURIComponent(groupPrimary.value),'PUT',{account_ids:groupMembers.value},'账号组合已保存。请在音乐设置及歌单设置中选择来源。'))readGroup()}
 function accountScope(account: Account) {
-  if (!config.value.isolation) return config.value.shared_account===account.id ? '共享账号' : '未启用'
-  return accountUsers(account) ? '独立分配' : '尚未分配'
+  if (!config.value.isolation) return config.value.shared_account===account.id ? '共享账号' : config.value.account_groups?.[config.value.shared_account]?.includes(account.id)?'组合音源':'未启用'
+  return accountUsers(account) ? '独立分配' : Object.entries(config.value.account_groups??{}).some(([primary,ids])=>ids.includes(account.id)&&accountUsers(config.value.accounts.find(a=>a.id===primary)!))?'组合音源':'尚未分配'
 }
 function announce(message: string) { clearTimeout(noticeTimer); notice.value = message; noticeTimer = setTimeout(() => notice.value = '', 5000) }
 function clearFeedback() { error.value = ''; notice.value = ''; clearTimeout(noticeTimer) }
@@ -92,7 +97,8 @@ async function sync(signal: AbortSignal) {
   if (disposed || signal.aborted) return
   state.value = status
   config.value = {...settings, accounts: settings.accounts ?? [], bindings: settings.bindings ?? {}}
-  loaded.value = true
+  if(!config.value.accounts.some(a=>a.id===groupPrimary.value))groupPrimary.value=config.value.accounts[0]?.id??'';readGroup()
+ loaded.value = true
 }
 async function refresh() {
   if (busy.value || settingsBusy.value || settingsDirty.value) return
@@ -222,7 +228,7 @@ onUnmounted(() => {disposed=true; usersController?.abort(); controller?.abort();
         </template>
 
         <template v-else-if="selected==='access'">
-          <section class="section"><div class="section-heading"><div><h2>账号访问模式</h2><p>决定飞牛用户使用哪个音源账号。</p></div><label class="switch"><input type="checkbox" role="switch" aria-label="开启用户隔离" :checked="config.isolation" :disabled="busy" @change="changeIsolation"/><span aria-hidden="true"/></label></div><div class="mode-description"><AppIcon :name="config.isolation?'lock':'accounts'"/><div><h3>{{config.isolation?'用户隔离已开启':'当前使用共享账号'}}</h3><p>{{config.isolation?'每位用户只使用为其绑定的账号；未绑定用户仍可使用本地音乐。':'所有已验证的飞牛用户共用一个账号，其歌单和账号权益会被共同使用。'}}</p></div></div><div v-if="!config.isolation" class="field shared-select"><label for="shared-account">共享音源账号</label><select id="shared-account" :value="config.shared_account" :disabled="busy" @change="changeShared"><option value="">不启用在线账号</option><option v-for="account in config.accounts" :key="account.id" :value="account.id">{{account.name}}</option></select><p v-if="!config.accounts.length" class="helper">请先在“音源账号”中添加账号。</p></div></section>
+          <section class="section"><div class="section-heading"><div><h2>账号访问模式</h2><p>决定飞牛用户使用哪个音源账号。</p></div><label class="switch"><input type="checkbox" role="switch" aria-label="开启用户隔离" :checked="config.isolation" :disabled="busy" @change="changeIsolation"/><span aria-hidden="true"/></label></div><div class="mode-description"><AppIcon :name="config.isolation?'lock':'accounts'"/><div><h3>{{config.isolation?'用户隔离已开启':'当前使用共享账号'}}</h3><p>{{config.isolation?'每位用户只使用为其绑定的账号；未绑定用户仍可使用本地音乐。':'所有已验证的飞牛用户共用所选账号及其组合音源，其歌单和账号权益会被共同使用。'}}</p></div></div><div v-if="!config.isolation" class="field shared-select"><label for="shared-account">共享音源账号</label><select id="shared-account" :value="config.shared_account" :disabled="busy" @change="changeShared"><option value="">不启用在线账号</option><option v-for="account in config.accounts" :key="account.id" :value="account.id">{{account.name}}</option></select><p v-if="!config.accounts.length" class="helper">请先在“音源账号”中添加账号。</p></div></section>
           <section v-if="config.isolation" class="section"><div class="section-heading"><div><h2>用户账号分配</h2><p>按用户名选择，无需填写内部标识。切换共享模式后分配仍会保留。</p></div><button class="text-button" :disabled="usersLoading||busy" @click="loadUsers">{{usersLoading?'读取中…':'刷新用户'}}</button></div>
           <p v-if="usersError" class="feedback error" role="alert">{{usersError}}</p>
           <form class="binding-form" @submit.prevent="saveBinding"><div class="field"><label for="user-search">搜索用户名</label><input id="user-search" v-model="userSearch" type="search" placeholder="输入用户名筛选" :disabled="busy"/></div><div class="field"><label for="nas-user">飞牛用户</label><select id="nas-user" v-model="selectedUsername" :disabled="busy||usersLoading" @change="selectUser"><option value="">请选择用户</option><option v-for="u in matchingUsers" :key="u.username" :value="u.username">{{u.username}}{{u.current?'（当前用户）':''}}</option></select></div><div class="field"><label for="bound-account">音源账号</label><select id="bound-account" v-model="boundAccount" :disabled="busy"><option value="">解除此用户的分配</option><option v-for="account in config.accounts" :key="account.id" :value="account.id">{{account.name}}</option></select></div><button class="button primary" :disabled="busy||!selectedNASUser">{{operation==='bind'?'保存中…':'保存分配'}}</button></form>
@@ -230,6 +236,7 @@ onUnmounted(() => {disposed=true; usersController?.abort(); controller?.abort();
           <p v-if="selectedNASUser&&!selectedNASUser.verified" class="helper">该用户的音乐身份尚未确认。可先保存分配，再让其打开飞牛音乐；接口提供可核对的身份信息后会自动关联。未确认前仅使用本地音乐，也可切换共享模式。</p>
           <div class="binding-list"><div v-for="(id,name) in config.user_bindings" :key="name" class="binding-row"><strong>{{name}}</strong><AppIcon name="arrow"/><strong>{{config.accounts.find(a=>a.id===id)?.name??id}}</strong><span class="helper">{{nasUsers.find(u=>u.username===name)?.verified?'音乐身份已确认':'等待音乐身份确认'}}</span><button class="text-button" :disabled="busy" @click="unbindName(String(name))">解除分配</button></div><div v-for="(id,guid,index) in config.bindings" :key="guid" class="binding-row"><strong>{{config.user_identities?.[guid]?.username??('旧版绑定用户 '+(index+1))}}</strong><AppIcon name="arrow"/><strong>{{config.accounts.find(a=>a.id===id)?.name??id}}</strong><span class="helper">保留的旧版绑定</span><button class="text-button" :disabled="busy" @click="unbind(String(guid))">解除绑定</button></div></div>
           </section>
+          <section class="section"><div class="section-heading"><div><h2>账号组合</h2><p>为已分配的主账号添加另一个平台的账号，用于多来源搜索与歌单展示。每个平台最多使用一个账号。</p></div></div><form @submit.prevent="saveGroup"><div class="field"><label for="group-primary">主账号</label><select id="group-primary" v-model="groupPrimary" :disabled="busy"><option v-if="!config.accounts.length" value="">请先添加账号</option><option v-for="a in config.accounts" :key="a.id" :value="a.id">{{a.name}} · {{sourceName(accountSource(a.bridge_url))}}</option></select></div><div class="field"><span id="group-members-label">附加音源</span><div class="group-choices" role="group" aria-labelledby="group-members-label"><label v-for="a in groupCandidates" :key="a.id">{{a.name}} · {{sourceName(accountSource(a.bridge_url))}}<input v-model="groupMembers" type="checkbox" :value="a.id" :disabled="busy||(!groupMembers.includes(a.id)&&groupMembers.length>=1)"/></label><p v-if="!groupCandidates.length" class="helper">添加另一个平台的账号后即可组合。</p></div></div><p class="helper">主账号的使用者也能访问附加账号的歌单及权益。隔离模式下，附加账号不能已分配给其他用户；不勾选则仅使用主账号。</p><button class="button primary" :disabled="busy||!groupPrimary">{{operation==='group'?'保存中…':'保存账号组合'}}</button></form></section>
           <p class="page-note"><AppIcon name="check"/>共享设置即时生效；隔离分配在音乐身份确认后生效，无需重启。</p>
         </template>
 

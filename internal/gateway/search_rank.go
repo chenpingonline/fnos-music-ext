@@ -111,10 +111,24 @@ func rankSearch(keyword string, candidates []searchCandidate) []json.RawMessage 
 // Freeze the bounded candidate set before pagination so later pages cannot
 // insert new hits ahead of rows the user has already seen.
 func (g *Gateway) rankedSearch(ctx context.Context, r *http.Request, user provider.User, source provider.Adapter, scope, keyword string) ([]json.RawMessage, error) {
+	sources := g.sourcesFor(user)
+	// Direct adapter callers have no account resolver; production requests resolve
+	// grants before reaching search. Keep the same selection policy for both.
+	if len(sources) == 0 && g.accounts == nil && g.online == nil {
+		sources = []provider.AccountSource{{Adapter: source, Scope: scope}}
+	}
+	selected := make([]provider.AccountSource, 0, len(sources))
+	var sourceKeys []string
+	for _, s := range sources {
+		if sourceEnabled(g.policy().SearchSources, s.Adapter.ID()) {
+			selected = append(selected, s)
+			sourceKeys = append(sourceKeys, s.Adapter.ID()+":"+s.Scope)
+		}
+	}
 	filters := r.URL.Query()
 	filters.Del("page")
 	filters.Del("size")
-	key := fmt.Sprintf("%s\x00%s\x00%d\x00%s\x00%s\x00%s", user.FnOSGUID, scope, g.revision(), r.URL.Path, keyword, filters.Encode())
+	key := fmt.Sprintf("%s\x00%s\x00%d\x00%s\x00%s\x00%s\x00%s", user.FnOSGUID, scope, g.revision(), r.URL.Path, keyword, filters.Encode(), strings.Join(sourceKeys, "\x01"))
 	g.searchMu.Lock()
 	if g.rankedSearches == nil {
 		g.rankedSearches = map[string]*rankedSearchPool{}
@@ -199,22 +213,40 @@ func (g *Gateway) rankedSearch(ctx context.Context, r *http.Request, user provid
 			break
 		}
 	}
-	result, err := g.searchWindow(ctx, user, source, scope, keyword, 0, pages*100)
-	if err != nil {
-		return nil, err
+	results := make([]provider.SearchPage, len(selected))
+	errs := make([]error, len(selected))
+	var wg sync.WaitGroup
+	for i, s := range selected {
+		wg.Add(1)
+		go func(i int, s provider.AccountSource) {
+			defer wg.Done()
+			results[i], errs[i] = g.searchWindow(ctx, user, s.Adapter, s.Scope, keyword, 0, pages*100)
+		}(i, s)
 	}
-	for _, t := range result.Tracks {
-		vo, ok := g.trackVO(user, scope, t, true)
-		if !ok {
+	wg.Wait()
+	success := len(selected) == 0
+	for i, s := range selected {
+		if errs[i] != nil {
 			continue
 		}
-		raw, err := json.Marshal(vo)
-		if err != nil {
-			return nil, err
+		success = true
+		for _, t := range results[i].Tracks {
+			vo, ok := g.trackVO(user, s.Scope, t, true)
+			if !ok {
+				continue
+			}
+			raw, err := json.Marshal(vo)
+			if err != nil {
+				return nil, err
+			}
+			candidates = append(candidates, searchCandidate{raw: raw, title: t.Title, artist: strings.Join(t.Artists, " "), source: t.Source})
+			g.cache.put(s.Scope+":"+t.ID, t)
 		}
-		candidates = append(candidates, searchCandidate{raw: raw, title: t.Title, artist: strings.Join(t.Artists, " "), source: t.Source})
-		g.cache.put(scope+":"+t.ID, t)
 	}
+	if !success {
+		return nil, fmt.Errorf("all selected search sources unavailable")
+	}
+
 	pool.rows = rankSearch(keyword, candidates)
 	pool.ready = true
 	return pool.rows, nil

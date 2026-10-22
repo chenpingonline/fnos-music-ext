@@ -5,7 +5,7 @@ import QRCode from 'qrcode'
 const qqImage=await QRCode.toDataURL('qqmusic-local-preview-only')
 const challenge=source=>source==='qqmusic'?{qr_image:qqImage}:{qr_url:'https://music.163.com/login?codekey=local-ui-preview-only'}
 const version=readFileSync(new URL('../../packaging/fpk/manifest.in',import.meta.url),'utf8').match(/^version\s*=\s*(\S+)/m)[1]
-const config={isolation:false,shared_account:'family',accounts:[{id:'family',name:'家庭账号',bridge_url:'native://netease/family'},{id:'personal',name:'私人账号',bridge_url:'native://netease/personal'}],bindings:{},user_bindings:{},user_identities:{}}
+const config={account_groups:{},isolation:false,shared_account:'family',accounts:[{id:'family',name:'家庭账号',bridge_url:'native://netease/family'},{id:'personal',name:'私人账号',bridge_url:'native://qqmusic/personal'}],bindings:{},user_bindings:{},user_identities:{}}
 let settings={quality:'high',download_quality:'app',search_timeout:10,search_probe:false,deep_page:true,max_pages:10,personal_playlists:true,hot:false,daily:false,public_enabled:false,public:[],save_enabled:false,auto_cover:true,auto_lyrics:false,cache_max:2,cache_dir:'/vol1/1000/music-cache',cover_cache_dir:'/vol1/1000/cover-cache',download_dir:'/vol1/1000/Music',auto_bind:false,bind_timeout:300,handoff_max:2,scan_path:'',filename:'{artist} - {title}'}
 const drafts=new Map();let draftSequence=0
 const playlists=[{id:'morning',title:'日常循环',track_count:3},{id:'quiet',title:'轻音乐',track_count:2}]
@@ -34,6 +34,7 @@ const previewPlugin={name:'local-ui-preview',transformIndexHtml(html){return htm
  }
  else if(path==='/accounts'&&method==='GET')data=config
  else if(path==='/accounts'&&method==='POST'){if(config.accounts.some(a=>a.id===body.id)){res.statusCode=409;data={error:'账号已存在'}}else{config.accounts.push(body);data={ok:true}}}
+ else if(path.startsWith('/accounts/groups/')){config.account_groups[decodeURIComponent(path.split('/').pop())]=body.account_ids;data={ok:true}}
  else if(path==='/accounts/mode'){config.isolation=body.isolation;data={ok:true}}
  else if(path==='/accounts/shared'){config.shared_account=body.account_id;data={ok:true}}
  else if(/^\/accounts\/[^/]+$/.test(path)&&method==='DELETE'){const id=decodeURIComponent(path.split('/')[2]);config.accounts=config.accounts.filter(a=>a.id!==id);if(config.shared_account===id)config.shared_account='';data={ok:true}}

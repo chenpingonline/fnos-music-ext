@@ -5,7 +5,7 @@ import PlaylistCover from './PlaylistCover.vue'
 import type { Account, MusicPlaylist } from '../useAccountPanel'
 
 type Selection = {id:string;title:string;kind:string;cover_url?:string}
-type Policy = {quality:string;download_quality:string;search_timeout:number;search_probe:boolean;deep_page:boolean;max_pages:number;personal_playlists:boolean;personal_selections?:Record<string,string[]>;hot:boolean;daily:boolean;public_enabled:boolean;public:Selection[];save_enabled:boolean;auto_cover:boolean;auto_lyrics:boolean;cache_max:number;cache_dir:string;cover_cache_dir:string;download_dir:string;auto_bind:boolean;bind_timeout:number;handoff_max:number;scan_path:string;filename:string}
+type Policy = {search_sources:string[]|null;playlist_sources:string[]|null;quality:string;download_quality:string;search_timeout:number;search_probe:boolean;deep_page:boolean;max_pages:number;personal_playlists:boolean;personal_selections?:Record<string,string[]>;hot:boolean;daily:boolean;public_enabled:boolean;public:Selection[];save_enabled:boolean;auto_cover:boolean;auto_lyrics:boolean;cache_max:number;cache_dir:string;cover_cache_dir:string;download_dir:string;auto_bind:boolean;bind_timeout:number;handoff_max:number;scan_path:string;filename:string}
 type Task = {id:string;user:string;track:{title:string;artists:string[]};state:string;purpose:string;percent:number;bytes:number;error?:string;warning?:string;path?:string}
 type Card = {id:string;title:string;cover_url?:string;track_count:number}
 const emit=defineEmits<{dirty:[value:boolean];busy:[value:boolean];access:[]}>()
@@ -47,7 +47,7 @@ const downloadOptions = [{value:'app',label:'跟随 App',hint:'标准档提供 M
 const labels:Record<string,string>={queued:'排队中',running:'下载中',paused:'已暂停',completed:'已完成',failed:'失败',cancelled:'已取消',cache:'滚动缓存',save:'边听边存',bind:'收藏入库',download:'App 下载'}
 const selectFields = computed(()=>props.page==='music'?[{key:'quality' as const,title:'播放音质',options:qualityOptions},{key:'download_quality' as const,title:'下载音质',options:downloadOptions}]:[])
 function clear(){error.value='';notice.value=''}
-async function load(){loading.value=true;clear();try{policy.value=await request<Policy>('/settings','GET',undefined,mainController.signal);policy.value.public??=[];policy.value.cover_cache_dir??='';baseline.value=JSON.stringify(policy.value);if(props.page==='storage')await loadCoverCache()}catch(e){if(!disposed)error.value=errorMessage(e)}finally{if(!disposed)loading.value=false}}
+async function load(){loading.value=true;clear();try{policy.value=await request<Policy>('/settings','GET',undefined,mainController.signal);policy.value.public??=[];policy.value.search_sources??=['netease','qqmusic'];policy.value.playlist_sources??=['netease','qqmusic'];policy.value.cover_cache_dir??='';baseline.value=JSON.stringify(policy.value);if(props.page==='storage')await loadCoverCache()}catch(e){if(!disposed)error.value=errorMessage(e)}finally{if(!disposed)loading.value=false}}
 async function save(){if(!policy.value||busy.value)return;busy.value=true;clear();try{const value=await request<Policy>('/settings','PUT',policy.value,mainController.signal);if(disposed)return;policy.value=value;baseline.value=JSON.stringify(value);notice.value='设置已保存并生效。';if(props.page==='storage')await loadCoverCache()}catch(e){if(!disposed)error.value=errorMessage(e)}finally{if(!disposed)busy.value=false}}
 function reset(){policy.value=JSON.parse(baseline.value) as Policy;clear()}
 async function directoryAction(field:'cache_dir'|'download_dir'|'cover_cache_dir',action:'pick'|'check'|'detect'){
@@ -98,10 +98,14 @@ onUnmounted(()=>{emit('dirty',false);emit('busy',false);disposed=true;personalCo
  <form v-if="page!=='tasks'" id="music-settings-form" @submit.prevent="save">
  <fieldset :disabled="busy" class="settings-fields">
  <template v-if="page==='music'">
+ <section class="setting-section"><h2>搜索来源</h2><div class="source-picker"><span id="search-sources-label">参与搜索的平台</span><div role="group" aria-labelledby="search-sources-label"><label>网易云音乐<input v-model="policy.search_sources" type="checkbox" value="netease"/></label><label>QQ 音乐<input v-model="policy.search_sources" type="checkbox" value="qqmusic"/></label></div></div><p class="muted">可单选或多选；不选时只搜索本地音乐。仅使用在“访问设置”中授权给用户的账号。多个平台的同名歌曲分别显示来源。</p></section>
+
  <section v-for="field in selectFields" :key="field.key" class="setting-section"><h2>{{field.title}}</h2><div class="options"><label v-for="option in field.options" :key="option.value" class="option" :class="{chosen:policy[field.key]===option.value}"><input v-model="policy[field.key]" type="radio" :name="field.key" :value="option.value"/><span><strong>{{option.label}}</strong><small>{{option.hint}}</small></span></label></div></section>
  <section class="setting-section"><h2>搜索策略</h2><label class="toggle-row"><span><strong>逐曲探活</strong><small>搜索前检查播放链接，可能增加等待时间。</small></span><input v-model="policy.search_probe" type="checkbox"/></label><label class="toggle-row"><span><strong>搜索深分页</strong><small>继续获取更多候选结果；按匹配程度排序，同层来源交错展示。</small></span><input v-model="policy.deep_page" type="checkbox"/></label><div class="field-grid"><label>搜索超时（秒）<input v-model.number="policy.search_timeout" type="number" min="1" max="60" required/></label><label>每个来源最多取页数<input v-model.number="policy.max_pages" type="number" min="1" max="50" required :disabled="!policy.deep_page"/></label></div></section>
  </template>
  <template v-if="page==='recommend'">
+ <section class="setting-section"><h2>歌单显示来源</h2><div class="source-picker"><span id="playlist-sources-label">显示歌单的平台</span><div role="group" aria-labelledby="playlist-sources-label"><label>网易云音乐<input v-model="policy.playlist_sources" type="checkbox" value="netease"/></label><label>QQ 音乐<input v-model="policy.playlist_sources" type="checkbox" value="qqmusic"/></label></div></div><p class="muted">可单选或多选，与搜索来源独立。不选时只显示本地歌单；下方可继续筛选各账号的个人歌单。</p></section>
+
  <section class="setting-section"><h2>音乐页推荐</h2><label class="toggle-row"><span><strong>显示音源个人歌单</strong><small>在飞牛音乐中显示当前音源账号的个人歌单。只想显示排行榜时可关闭，不影响平台原有歌单。</small></span><input v-model="policy.personal_playlists" type="checkbox"/></label><label class="toggle-row"><span><strong>热门推荐</strong><small>在官方音乐页添加独立的热歌榜歌单。</small></span><input v-model="policy.hot" type="checkbox"/></label><label class="toggle-row"><span><strong>每日推荐</strong><small>使用当前用户绑定的网易云登录态，按账号隔离缓存。</small></span><input v-model="policy.daily" type="checkbox"/></label><label class="toggle-row"><span><strong>公共歌单</strong><small>选中的歌单按下方顺序显示，在线公共歌单只读。</small></span><input v-model="policy.public_enabled" type="checkbox"/></label></section>
  <section class="setting-section">
  <h2>选择个人歌单</h2>
@@ -132,6 +136,7 @@ onUnmounted(()=>{emit('dirty',false);emit('busy',false);disposed=true;personalCo
 </template>
 <style scoped>
 .music-settings { min-width: 0; }
+.source-picker{display:grid;grid-template-columns:minmax(90px,140px) minmax(0,1fr);gap:16px;align-items:center}.source-picker>div{display:flex;flex-wrap:wrap;gap:12px 24px}.source-picker label{display:flex;align-items:center;gap:12px;justify-content:space-between;font-size:13px}.source-picker input{margin:0;accent-color:var(--accent)}
 .settings-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 .setting-section { padding: 0 0 24px; margin-bottom: 24px; border-bottom: 1px solid var(--line-soft); }
 .setting-section:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 4px; }

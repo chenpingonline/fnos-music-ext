@@ -352,9 +352,13 @@ func (g *Gateway) onlineSong(w http.ResponseWriter, r *http.Request, action stri
 		http.Error(w, "verified fnOS account required", http.StatusForbidden)
 		return true
 	}
-	source, accountID, allowed := g.sourceFor(user)
+	source, accountID, allowed := g.trackSource(user, guid)
 	if !allowed {
-		http.Error(w, "no music account selected for this fnOS user", http.StatusForbidden)
+		if _, _, hasAccount := g.sourceFor(user); hasAccount {
+			http.Error(w, "track belongs to another source", http.StatusForbidden)
+		} else {
+			http.Error(w, "no music account selected for this fnOS user", http.StatusForbidden)
+		}
 		return true
 	}
 	if !trackSourceMatches(source, guid) {

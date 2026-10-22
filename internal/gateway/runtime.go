@@ -14,8 +14,12 @@ func (g *Gateway) Configure(root string, settings *preferences.Store) error {
 	}
 	g.ledger = ledger
 	media, e := library.New(root, settings, func(user, scope string) (provider.Adapter, bool) {
-		a, current, ok := g.sourceFor(provider.User{FnOSGUID: user, Verified: true})
-		return a, ok && current == scope
+		for _, s := range g.sourcesFor(provider.User{FnOSGUID: user, Verified: true}) {
+			if s.Scope == scope {
+				return s.Adapter, true
+			}
+		}
+		return nil, false
 	})
 	if e != nil {
 		return e

@@ -103,3 +103,37 @@ func TestPersonalSelectionsPersistenceAndIsolation(t *testing.T) {
 		t.Fatal("duplicate IDs accepted")
 	}
 }
+
+func TestSourceSelectionPersistsEmptyAndCopiesSlices(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sources.json")
+	s, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := s.Snapshot()
+	c.SearchSources = []string{}
+	c.PlaylistSources = []string{"qqmusic"}
+	if err = s.Update(c); err != nil {
+		t.Fatal(err)
+	}
+	c.PlaylistSources[0] = "netease"
+	if s.Snapshot().PlaylistSources[0] != "qqmusic" {
+		t.Fatal("mutable policy alias")
+	}
+	s, err = New(path)
+	if err != nil || s.Snapshot().SearchSources == nil || len(s.Snapshot().SearchSources) != 0 {
+		t.Fatal("empty source selection lost", err)
+	}
+	snap := s.Snapshot()
+	snap.PlaylistSources[0] = "netease"
+	if s.Snapshot().PlaylistSources[0] != "qqmusic" {
+		t.Fatal("mutable snapshot")
+	}
+	for _, bad := range [][]string{{"unknown"}, {"qqmusic", "qqmusic"}} {
+		c = s.Snapshot()
+		c.SearchSources = bad
+		if s.Update(c) == nil {
+			t.Fatal("invalid source accepted")
+		}
+	}
+}
