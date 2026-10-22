@@ -1,4 +1,10 @@
 * { box-sizing: border-box; }
+.account-name-status { display:flex; align-items:center; flex-wrap:wrap; gap:6px 12px; }
+.account-login-status { display:inline-flex; align-items:center; gap:5px; flex-shrink:0; color:var(--muted); font-size:11px; line-height:1.6; white-space:nowrap; }
+.account-login-status i { width:6px; height:6px; border-radius:50%; background:currentColor; }
+.account-login-status.valid { color:var(--success, #218653); }
+.account-login-status.expired { color:var(--danger, #cc4545); }
+.account-login-status.error { color:var(--warning, #a56b13); }
 html, body, #app { width: 100%; height: 100%; margin: 0; }
 body { color: var(--text); background: var(--frame); font: 13px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 button, input, select { font: inherit; }

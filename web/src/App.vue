@@ -5,6 +5,7 @@ import { connectTheme } from './theme'
 import { errorMessage, request } from './api.ts'
 import { useAccountPanel, type Account } from './useAccountPanel.ts'
 import { useAccountEnrollment } from './useAccountEnrollment.ts'
+import { useAccountStatuses } from './useAccountStatuses.ts'
 import AppIcon from './components/AppIcon.vue'
 import { accountSource, sourceName, scanClient, type MusicSource } from './loginQR'
 import neteaseIcon from './assets/netease-cloud-music.png'
@@ -50,6 +51,7 @@ const selectedNASUser=computed(()=>nasUsers.value.find(u=>u.username===selectedU
 const selectedUsername = ref(''), boundAccount = ref('')
 const enrollment = useAccountEnrollment()
 const panel = useAccountPanel()
+const accountStatuses = useAccountStatuses()
 const {account: focusAccount, action: panelAction, error: panelError, playlists, playlist, tracks, playlistsLoaded, page: trackPage, busy: panelBusy, visibleTracks, pageCount} = panel
 let usersController:AbortController|undefined
 let controller: AbortController | undefined, disposed = false
@@ -99,6 +101,7 @@ async function sync(signal: AbortSignal) {
   config.value = {...settings, accounts: settings.accounts ?? [], bindings: settings.bindings ?? {}}
   if(!config.value.accounts.some(a=>a.id===groupPrimary.value))groupPrimary.value=config.value.accounts[0]?.id??'';readGroup()
  loaded.value = true
+  if (selected.value === 'accounts') void accountStatuses.check(config.value.accounts)
 }
 async function refresh() {
   if (busy.value || settingsBusy.value || settingsDirty.value) return
@@ -184,7 +187,11 @@ onMounted(() => {
   void refresh()
 })
 watch(userSearch,()=>{if(!matchingUsers.value.some(u=>u.username===selectedUsername.value)){selectedUsername.value='';boundAccount.value=''}})
-onUnmounted(() => {disposed=true; usersController?.abort(); controller?.abort(); panel.close(); enrollment.close(); disposeTheme?.(); clearTimeout(scrollTimer); clearTimeout(noticeTimer)})
+watch(selected, page => {
+  if (page === 'accounts' && loaded.value) void accountStatuses.check(config.value.accounts)
+  else accountStatuses.cancel()
+})
+onUnmounted(() => {disposed=true; accountStatuses.cancel(); usersController?.abort(); controller?.abort(); panel.close(); enrollment.close(); disposeTheme?.(); clearTimeout(scrollTimer); clearTimeout(noticeTimer)})
 </script>
 
 <template>
@@ -213,7 +220,7 @@ onUnmounted(() => {disposed=true; usersController?.abort(); controller?.abort();
                 <template v-else>
                   <div class="account-columns" aria-hidden="true"><span>账号</span><span>连接类型</span><span>访问范围</span><span>歌单</span></div>
                   <div class="account-list"><article v-for="account in matchingAccounts" :key="account.id" class="account-row">
-                    <div class="account-identity"><span class="account-avatar native-avatar"><img :src="accountSource(account.bridge_url)==='qqmusic'?qqMusicIcon:neteaseIcon" width="40" height="40" decoding="async" :alt="accountSource(account.bridge_url)==='qqmusic'?'QQ 音乐':'网易云音乐'"/></span><div class="account-info"><h3>{{account.name}}</h3></div></div>
+                    <div class="account-identity"><span class="account-avatar native-avatar"><img :src="accountSource(account.bridge_url)==='qqmusic'?qqMusicIcon:neteaseIcon" width="40" height="40" decoding="async" :alt="accountSource(account.bridge_url)==='qqmusic'?'QQ 音乐':'网易云音乐'"/></span><div class="account-info account-name-status"><h3>{{account.name}}</h3><span class="account-login-status" :class="accountStatuses.get(account.id).state" :title="accountStatuses.get(account.id).detail" :aria-label="account.name+'：'+accountStatuses.get(account.id).label" role="status"><i aria-hidden="true"/>{{accountStatuses.get(account.id).label}}</span></div></div>
                     <div class="account-type"><span>{{sourceName(accountSource(account.bridge_url))}}</span></div>
                     <div class="account-scope"><strong><AppIcon :name="config.isolation?'user':'accounts'"/>{{accountScope(account)}}</strong></div>
                     <div class="row-actions"><button class="account-open" :disabled="busy" @click="panel.openPlaylists(account)"><span>歌单</span><AppIcon name="arrow"/></button><button class="icon-button danger-hover" :aria-label="'删除账号 '+account.name" :title="'删除 '+account.name" :disabled="busy" @click="confirmDelete(account)"><AppIcon name="trash"/></button></div>
