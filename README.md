@@ -6,7 +6,7 @@
 
 本项目参考 [fnmusic-ext](https://github.com/javycoder/fnos_music_ext) 的功能设计与集成方式重新实现，网易云协议适配参考 [MusicBox](https://github.com/darknessomi/musicbox)。感谢原项目作者与贡献者。
 
-> 当前为开发预览版，真实 fnOS 安装、官方客户端与音源兼容性仍需设备验收。版本以 [`manifest.in`](packaging/fpk/manifest.in) 为准，近期变化见 [v0.5.29 搜索排序更新说明](docs/V0_5_29_RELEASE_NOTES.md)。
+> 当前为开发预览版，真实 fnOS 安装、官方客户端与音源兼容性仍需设备验收。版本以 [`manifest.in`](packaging/fpk/manifest.in) 为准，近期变化见 [v0.5.30 打包更新说明](docs/V0_5_30_RELEASE_NOTES.md)。
 
 ## 主要功能
 
@@ -96,6 +96,8 @@ npm run build
 | x86_64 安装包 | `dist/fnmusic-go-<版本>-x86.fpk` |
 | ARM64 安装包 | `dist/fnmusic-go-<版本>-arm.fpk` |
 | 打包目录 | `dist/fpk-stage/x86/`、`dist/fpk-stage/arm/` |
+
+每次执行实际 FPK 打包时，脚本会自动将 `packaging/fpk/manifest.in` 的补丁版本号加 1，再构建前端与二进制；双架构同一次打包共用一个新版本号。重新打包也必须使用新版本号，构建失败已递增的版本号不回退。`--stage-only` 和单独构建二进制不递增版本号。
 
 版本统一读取 `packaging/fpk/manifest.in`，并注入程序、管理页面和产物文件名。生命周期脚本位于 `packaging/fpk/cmd/`；安装和升级准备服务配置，由应用中心调用 `cmd/main` 启停。
 

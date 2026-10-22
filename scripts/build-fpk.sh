@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-. "${ROOT}/scripts/version.sh"
 STAGE_ONLY=false
 ARCH=all
 while (($#)); do
@@ -12,7 +11,24 @@ while (($#)); do
   esac
 done
 case "$ARCH" in all) platforms=(x86 arm);; x86|arm) platforms=("$ARCH");; *) echo 'invalid architecture' >&2; exit 1;; esac
-if ! "$STAGE_ONLY"; then command -v fnpack >/dev/null || { echo 'official fnpack is required' >&2; exit 2; }; fi
+if ! "$STAGE_ONLY"; then
+  command -v fnpack >/dev/null || { echo 'official fnpack is required' >&2; exit 2; }
+  python3 - "$ROOT/packaging/fpk/manifest.in" <<'BUMP'
+import re, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+text = path.read_text()
+pattern = r'(?m)^(version[ \t]*=[ \t]*)([0-9]+)\.([0-9]+)\.([0-9]+)([ \t]*)$'
+match = re.search(pattern, text)
+if not match:
+    sys.exit('invalid manifest version')
+version = f'{match[2]}.{match[3]}.{int(match[4]) + 1}'
+text = text[:match.start()] + match[1] + version + match[5] + text[match.end():]
+path.write_text(text)
+print(f'[version] {match[2]}.{match[3]}.{match[4]} -> {version}')
+BUMP
+fi
+. "${ROOT}/scripts/version.sh"
 "${ROOT}/scripts/build-binaries.sh" "$ARCH"
 for platform in "${platforms[@]}"; do
   arch=amd64; [[ "$platform" != arm ]] || arch=arm64
