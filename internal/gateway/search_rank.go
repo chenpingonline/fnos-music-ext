@@ -11,19 +11,39 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/chenpingonline/fnos-music-ext/internal/diagnostics"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 )
 
+const rankedSearchBatch = 20
+const searchSourceTimeout = 3 * time.Second
+
+type rankedSourceState struct {
+	offset, total int
+	done          bool
+	failed        bool
+}
+
 type rankedSearchPool struct {
-	mu      sync.Mutex
-	expires time.Time
-	rows    []json.RawMessage
-	ready   bool
+	mu         sync.Mutex
+	expires    time.Time
+	rows       []json.RawMessage
+	states     []rankedSourceState
+	seenLocal  map[string]bool
+	partial    bool
+	retryAfter time.Time
 }
 
 type searchCandidate struct {
 	raw                   json.RawMessage
 	title, artist, source string
+}
+
+// The official Web track search loads one list and does not request subsequent
+// pages. Only callers explicitly passing pagination can consume a short page.
+func unpagedSearch(r *http.Request) bool {
+	query := r.URL.Query()
+	return !query.Has("page") && !query.Has("size")
 }
 
 // Normalize typography without discarding version labels such as Live or 伴奏.
@@ -108,19 +128,18 @@ func rankSearch(keyword string, candidates []searchCandidate) []json.RawMessage 
 	return rows
 }
 
-// Freeze the bounded candidate set before pagination so later pages cannot
-// insert new hits ahead of rows the user has already seen.
-func (g *Gateway) rankedSearch(ctx context.Context, r *http.Request, user provider.User, source provider.Adapter, scope, keyword string) ([]json.RawMessage, error) {
+// Extend a stable prefix in small batches. Only newly fetched candidates are
+// ranked; previously returned rows never move when another batch arrives.
+func (g *Gateway) rankedSearch(ctx context.Context, r *http.Request, user provider.User, source provider.Adapter, scope, keyword string) ([]json.RawMessage, int, error) {
+	cfg := g.policy()
 	sources := g.sourcesFor(user)
-	// Direct adapter callers have no account resolver; production requests resolve
-	// grants before reaching search. Keep the same selection policy for both.
 	if len(sources) == 0 && g.accounts == nil && g.online == nil {
 		sources = []provider.AccountSource{{Adapter: source, Scope: scope}}
 	}
 	selected := make([]provider.AccountSource, 0, len(sources))
 	var sourceKeys []string
 	for _, s := range sources {
-		if sourceEnabled(g.policy().SearchSources, s.Adapter.ID()) {
+		if sourceEnabled(cfg.SearchSources, s.Adapter.ID()) {
 			selected = append(selected, s)
 			sourceKeys = append(sourceKeys, s.Adapter.ID()+":"+s.Scope)
 		}
@@ -152,102 +171,168 @@ func (g *Gateway) rankedSearch(ctx context.Context, r *http.Request, user provid
 	g.searchMu.Unlock()
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
-	if pool.ready {
-		return pool.rows, nil
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
 	}
-	cfg := g.policy()
+	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	if size < 1 {
+		size = 50
+	}
+	needed := page * size
 	pages := cfg.MaxPages
 	if !cfg.DeepPage {
 		pages = 1
 	}
-	var candidates []searchCandidate
-	seen := map[string]bool{}
-	query := r.URL.Query()
-	query.Set("size", "100")
-	for page := 1; page <= pages; page++ {
-		query.Set("page", strconv.Itoa(page))
-		resp, b, err := g.official(ctx, r.Header, http.MethodGet, r.URL.Path+"?"+query.Encode(), nil)
-		if err != nil {
-			return nil, err
-		}
-		var body struct {
-			Data struct {
-				List  []json.RawMessage `json:"list"`
-				Total int               `json:"total"`
-			} `json:"data"`
-		}
-		if !officialOK(resp, b) || json.Unmarshal(b, &body) != nil || body.Data.Total < 0 {
-			return nil, fmt.Errorf("invalid official search page")
-		}
-		list := body.Data.List
-		// Some official versions return all rows regardless of pagination.
-		if len(list) > 100 {
-			lo := (page - 1) * 100
-			if lo > len(list) {
-				lo = len(list)
-			}
-			hi := lo + 100
-			if hi > len(list) {
-				hi = len(list)
-			}
-			list = list[lo:hi]
-		}
-		added := 0
-		for _, raw := range list {
-			var t struct{ GUID, Title, Artist string }
-			if json.Unmarshal(raw, &t) != nil {
-				return nil, fmt.Errorf("invalid official search track")
-			}
-			id := t.GUID
-			if id == "" {
-				id = string(raw)
-			}
-			if seen[id] {
+	budget := pages * 100
+	if unpagedSearch(r) {
+		needed = budget * (len(selected) + 1)
+	}
+	if pool.states == nil || (pool.partial && page == 1 && !time.Now().Before(pool.retryAfter)) {
+		pool.rows = make([]json.RawMessage, 0)
+		pool.states = make([]rankedSourceState, len(selected)+1)
+		pool.seenLocal = map[string]bool{}
+		pool.partial = false
+	}
+	for len(pool.rows) < needed && ctx.Err() == nil {
+		results := make([]provider.SearchPage, len(pool.states))
+		localRows := []json.RawMessage{}
+		errs := make([]error, len(pool.states))
+		active := false
+		var wg sync.WaitGroup
+		for i, state := range pool.states {
+			if state.done || state.failed {
 				continue
 			}
-			seen[id] = true
-			added++
-			candidates = append(candidates, searchCandidate{raw: raw, title: t.Title, artist: t.Artist, source: "local"})
+			active = true
+			wg.Add(1)
+			go func(i int, state rankedSourceState) {
+				defer wg.Done()
+				fetchCtx, cancel := context.WithTimeout(ctx, searchSourceTimeout)
+				defer cancel()
+				if i == 0 {
+					localRows, results[i].Total, errs[i] = g.localSearchBatch(fetchCtx, r, state.offset)
+				} else {
+					s := selected[i-1]
+					results[i], errs[i] = g.searchWindowSized(fetchCtx, user, s.Adapter, s.Scope, keyword, state.offset, rankedSearchBatch, rankedSearchBatch)
+				}
+			}(i, state)
 		}
-		if len(list) == 0 || added == 0 || page*100 >= body.Data.Total {
+		if !active {
 			break
 		}
-	}
-	results := make([]provider.SearchPage, len(selected))
-	errs := make([]error, len(selected))
-	var wg sync.WaitGroup
-	for i, s := range selected {
-		wg.Add(1)
-		go func(i int, s provider.AccountSource) {
-			defer wg.Done()
-			results[i], errs[i] = g.searchWindow(ctx, user, s.Adapter, s.Scope, keyword, 0, pages*100)
-		}(i, s)
-	}
-	wg.Wait()
-	success := len(selected) == 0
-	for i, s := range selected {
-		if errs[i] != nil {
-			continue
-		}
-		success = true
-		for _, t := range results[i].Tracks {
-			vo, ok := g.trackVO(user, s.Scope, t, true)
-			if !ok {
+		wg.Wait()
+		candidates := []searchCandidate{}
+		success := len(selected) == 0
+		for i := range pool.states {
+			state := &pool.states[i]
+			if state.done || state.failed {
 				continue
 			}
-			raw, err := json.Marshal(vo)
-			if err != nil {
-				return nil, err
+			if errs[i] != nil {
+				state.failed = true
+				pool.partial = true
+				name, resource := "local", scope
+				if i > 0 {
+					name = selected[i-1].Adapter.ID()
+					resource = selected[i-1].Scope
+				}
+				diagnostics.Record("search-"+name, resource, errs[i])
+			} else if i > 0 {
+				success = true
 			}
-			candidates = append(candidates, searchCandidate{raw: raw, title: t.Title, artist: strings.Join(t.Artists, " "), source: t.Source})
-			g.cache.put(s.Scope+":"+t.ID, t)
+			if i == 0 {
+				if errs[i] != nil {
+					continue
+				}
+				added := 0
+				for _, raw := range localRows {
+					var t struct{ GUID, Title, Artist string }
+					if json.Unmarshal(raw, &t) != nil {
+						continue
+					}
+					id := t.GUID
+					if id == "" {
+						id = string(raw)
+					}
+					if pool.seenLocal[id] {
+						continue
+					}
+					pool.seenLocal[id] = true
+					added++
+					candidates = append(candidates, searchCandidate{raw: raw, title: t.Title, artist: t.Artist, source: "local"})
+				}
+				state.offset += len(localRows)
+				state.total = min(results[i].Total, budget)
+				state.done = len(localRows) == 0 || added == 0 || state.offset >= state.total
+			} else {
+				s := selected[i-1]
+				if len(results[i].Tracks) > 0 {
+					success = true
+				}
+				for _, track := range results[i].Tracks {
+					vo, ok := g.trackVO(user, s.Scope, track, true)
+					if !ok {
+						continue
+					}
+					raw, err := json.Marshal(vo)
+					if err != nil {
+						return nil, 0, err
+					}
+					candidates = append(candidates, searchCandidate{raw: raw, title: track.Title, artist: strings.Join(track.Artists, " "), source: track.Source})
+					g.cache.put(s.Scope+":"+track.ID, track)
+				}
+				state.offset += len(results[i].Tracks)
+				state.total = min(results[i].Total, budget)
+				state.done = errs[i] == nil && !results[i].HasMore
+			}
+		}
+		if !success && len(pool.rows) == 0 {
+			return nil, 0, fmt.Errorf("all search sources unavailable")
+		}
+		pool.rows = append(pool.rows, rankSearch(keyword, candidates)...)
+		if pool.partial {
+			pool.retryAfter = time.Now().Add(10 * time.Second)
 		}
 	}
-	if !success {
-		return nil, fmt.Errorf("all selected search sources unavailable")
+	if ctx.Err() != nil && len(pool.rows) == 0 {
+		return nil, 0, ctx.Err()
 	}
+	total := len(pool.rows)
+	if !unpagedSearch(r) {
+		for _, state := range pool.states {
+			if !state.done && !state.failed && state.total > state.offset {
+				total += state.total - state.offset
+			}
+		}
+	}
+	return pool.rows, total, nil
+}
 
-	pool.rows = rankSearch(keyword, candidates)
-	pool.ready = true
-	return pool.rows, nil
+// Local and online sources use the same fixed batch size so page-size changes
+// cannot alter the order of the cached prefix.
+func (g *Gateway) localSearchBatch(ctx context.Context, r *http.Request, offset int) ([]json.RawMessage, int, error) {
+	query := r.URL.Query()
+	query.Set("size", strconv.Itoa(rankedSearchBatch))
+	query.Set("page", strconv.Itoa(offset/rankedSearchBatch+1))
+	resp, b, err := g.official(ctx, r.Header, http.MethodGet, r.URL.Path+"?"+query.Encode(), nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	var body struct {
+		Data struct {
+			List  []json.RawMessage `json:"list"`
+			Total int               `json:"total"`
+		} `json:"data"`
+	}
+	if !officialOK(resp, b) || json.Unmarshal(b, &body) != nil || body.Data.Total < 0 {
+		return nil, 0, fmt.Errorf("invalid official search page")
+	}
+	rows := body.Data.List
+	if len(rows) > rankedSearchBatch {
+		lo := min(offset, len(rows))
+		hi := min(lo+rankedSearchBatch, len(rows))
+		rows = rows[lo:hi]
+	}
+	return rows, body.Data.Total, nil
 }

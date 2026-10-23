@@ -58,8 +58,12 @@ type searchPool struct {
 }
 
 func (g *Gateway) searchWindow(ctx context.Context, user provider.User, source provider.Adapter, scope, keyword string, start, count int) (provider.SearchPage, error) {
+	return g.searchWindowSized(ctx, user, source, scope, keyword, start, count, 100)
+}
+
+func (g *Gateway) searchWindowSized(ctx context.Context, user provider.User, source provider.Adapter, scope, keyword string, start, count, batchSize int) (provider.SearchPage, error) {
 	c := g.policy()
-	key := fmt.Sprintf("%s\x00%s\x00%d\x00%s", user.FnOSGUID, scope, g.revision(), keyword)
+	key := fmt.Sprintf("%s\x00%s\x00%d\x00%s\x00%d", user.FnOSGUID, scope, g.revision(), keyword, batchSize)
 	g.searchMu.Lock()
 	if g.searches == nil {
 		g.searches = map[string]*searchPool{}
@@ -87,10 +91,12 @@ func (g *Gateway) searchWindow(ctx context.Context, user provider.User, source p
 	if !c.DeepPage {
 		limitPages = 1
 	}
+	// Preserve the configured candidate budget of 100 raw hits per nominal page.
+	limitPages *= 100 / batchSize
 	for !pool.done && len(pool.tracks) < start+count && pool.pages < limitPages {
-		result, e := source.Search(ctx, user, provider.SearchRequest{Keyword: keyword, Offset: pool.offset, Limit: 100})
+		result, e := source.Search(ctx, user, provider.SearchRequest{Keyword: keyword, Offset: pool.offset, Limit: batchSize})
 		if e != nil {
-			return provider.SearchPage{}, e
+			return pool.window(start, count, len(pool.tracks)), e
 		}
 		if len(result.Tracks) == 0 {
 			pool.done = true
@@ -122,7 +128,7 @@ func (g *Gateway) searchWindow(ctx context.Context, user provider.User, source p
 				cancel()
 				if err != nil || (s.StatusCode != 200 && s.StatusCode != 206) {
 					if ctx.Err() != nil {
-						return provider.SearchPage{}, ctx.Err()
+						return pool.window(start, count, len(pool.tracks)), ctx.Err()
 					}
 					continue
 				}
@@ -143,6 +149,12 @@ func (g *Gateway) searchWindow(ctx context.Context, user provider.User, source p
 	if total < len(pool.tracks) {
 		total = len(pool.tracks)
 	}
+	return pool.window(start, count, total), nil
+}
+
+// An interrupted later page must not discard tracks from completed pages or
+// successful probes. The caller receives both the usable prefix and the error.
+func (pool *searchPool) window(start, count, total int) provider.SearchPage {
 	lo := start
 	if lo > len(pool.tracks) {
 		lo = len(pool.tracks)
@@ -151,7 +163,7 @@ func (g *Gateway) searchWindow(ctx context.Context, user provider.User, source p
 	if hi > len(pool.tracks) {
 		hi = len(pool.tracks)
 	}
-	return provider.SearchPage{Tracks: append([]provider.Track{}, pool.tracks[lo:hi]...), Total: total, HasMore: hi < total}, nil
+	return provider.SearchPage{Tracks: append([]provider.Track{}, pool.tracks[lo:hi]...), Total: total, HasMore: hi < total}
 }
 func trackKey(t provider.Track) string {
 	return strings.ToLower(strings.TrimSpace(t.Title)) + "\x00" + strings.ToLower(strings.Join(t.Artists, " ")) + "\x00" + strings.ToLower(strings.TrimSpace(t.Album)) + fmt.Sprintf("\x00%d", t.DurationMS)

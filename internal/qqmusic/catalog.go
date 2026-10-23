@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/chenpingonline/fnos-music-ext/internal/diagnostics"
 	"github.com/chenpingonline/fnos-music-ext/internal/mediahttp"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 	"io"
@@ -54,9 +55,7 @@ func parseTrack(raw json.RawMessage) (provider.Track, error) {
 	}
 	album := object(row["album"])
 	t.Album = text(album, "title", "name")
-	if mid := text(album, "mid"); midPattern.MatchString(mid) {
-		t.CoverURL = "https://y.gtimg.cn/music/photo_new/T002R500x500M000" + mid + ".jpg"
-	}
+	t.CoverURL = albumCoverURL(album)
 	file := object(row["file"])
 	t.MediaID = text(file, "media_mid")
 	if t.MediaID != "" && !midPattern.MatchString(t.MediaID) {
@@ -337,26 +336,32 @@ func (n *Native) OpenTrackCoverSized(ctx context.Context, u provider.User, t pro
 	if err := u.Validate(); err != nil {
 		return provider.Stream{}, err
 	}
-	uri, err := url.Parse(t.CoverURL)
-	if err != nil || !mediahttp.SafeURL(uri) {
-		return provider.Stream{}, errors.New("invalid QQ cover URL")
-	}
 	if size < 0 || size > 2048 {
 		return provider.Stream{}, errors.New("invalid cover size")
+	}
+	if t.CoverURL == "" {
+		return defaultCover(), nil
+	}
+	uri, err := url.Parse(t.CoverURL)
+	if err != nil || !mediahttp.SafeURL(uri) {
+		return provider.Stream{}, diagnostics.New("invalid-cover-url")
 	}
 	req, _ := http.NewRequestWithContext(ctx, "GET", uri.String(), nil)
 	req.Header.Set("User-Agent", userAgent)
 	res, err := n.media.Do(req)
 	if err != nil {
-		return provider.Stream{}, errors.New("QQ 封面连接失败")
+		return provider.Stream{}, fmt.Errorf("QQ 封面连接失败: %w", err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
 		return provider.Stream{}, httpFailure("media-cdn", res.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, (6<<20)+1))
-	if err != nil || len(raw) > 6<<20 || !strings.HasPrefix(http.DetectContentType(raw), "image/") {
-		return provider.Stream{}, errors.New("invalid QQ cover image")
+	if err != nil {
+		return provider.Stream{}, fmt.Errorf("QQ 封面读取失败: %w", err)
+	}
+	if len(raw) > 6<<20 || !strings.HasPrefix(http.DetectContentType(raw), "image/") {
+		return provider.Stream{}, diagnostics.New("invalid-cover-image")
 	}
 	return provider.Stream{Body: io.NopCloser(strings.NewReader(string(raw))), StatusCode: 200, ContentLength: int64(len(raw)), ContentType: http.DetectContentType(raw)}, nil
 }

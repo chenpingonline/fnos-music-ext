@@ -127,6 +127,37 @@ func TestProbeAndPageCap(t *testing.T) {
 	}
 }
 
+func TestProbeCancellationKeepsSuccessfullyCheckedTracks(t *testing.T) {
+	g := New("/unused")
+	defer g.Close()
+	settings, _ := preferences.New("")
+	cfg := settings.Snapshot()
+	cfg.SearchProbe = true
+	settings.Update(cfg)
+	g.SetPreferences(settings)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	source := &policySource{
+		search: func(provider.SearchRequest) (provider.SearchPage, error) {
+			return provider.SearchPage{Tracks: []provider.Track{
+				{ID: "1", Title: "checked", Playable: true},
+				{ID: "2", Title: "interrupted", Playable: true},
+			}, Total: 2}, nil
+		},
+		play: func(q provider.PlaybackRequest) (provider.Stream, error) {
+			if q.TrackID == "2" {
+				cancel()
+				return provider.Stream{}, context.Canceled
+			}
+			return provider.Stream{StatusCode: 200, Body: io.NopCloser(strings.NewReader(""))}, nil
+		},
+	}
+	result, err := g.searchWindow(ctx, provider.User{FnOSGUID: "alice", Verified: true}, source, "scope", "query", 0, 100)
+	if !errors.Is(err, context.Canceled) || len(result.Tracks) != 1 || result.Tracks[0].ID != "1" {
+		t.Fatal("probe cancellation discarded successful tracks", result, err)
+	}
+}
+
 func TestAppDownloadQualityProtocol(t *testing.T) {
 	for _, row := range []struct {
 		config, request string

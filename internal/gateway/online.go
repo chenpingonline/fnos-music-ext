@@ -251,8 +251,10 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 	if len([]rune(keyword)) > 120 {
 		return false
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(g.policy().SearchTimeout)*time.Second)
+	defer cancel()
 	// Fetch official response first, preserve it byte-for-byte if source fails.
-	req := r.Clone(r.Context())
+	req := r.Clone(ctx)
 	u := *r.URL
 	u.Scheme = "http"
 	u.Host = "trim-music"
@@ -260,11 +262,19 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 	req.RequestURI = ""
 	resp, e := g.client.Do(req)
 	if e != nil {
+		if ctx.Err() != nil {
+			http.Error(w, "search timed out", http.StatusGatewayTimeout)
+			return true
+		}
 		return false
 	}
 	defer resp.Body.Close()
 	b, e := io.ReadAll(io.LimitReader(resp.Body, maxOfficialSearchBody+1))
 	if e != nil || len(b) > maxOfficialSearchBody {
+		if ctx.Err() != nil {
+			http.Error(w, "search timed out", http.StatusGatewayTimeout)
+			return true
+		}
 		return false
 	}
 	if resp.StatusCode != 200 {
@@ -283,9 +293,7 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 		writeOfficial(w, resp, b)
 		return true
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(g.policy().SearchTimeout)*time.Second)
-	defer cancel()
-	rows, err := g.rankedSearch(ctx, r, user, source, accountID, keyword)
+	rows, total, err := g.rankedSearch(ctx, r, user, source, accountID, keyword)
 	if err != nil {
 		diagnostics.Record("search", accountID, err)
 		writeOfficial(w, resp, b)
@@ -296,6 +304,9 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 		start = len(rows)
 	}
 	end := start + size
+	if unpagedSearch(r) {
+		end = len(rows)
+	}
 	if end > len(rows) {
 		end = len(rows)
 	}
@@ -307,7 +318,7 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 		return true
 	}
 	data["list"], _ = json.Marshal(rows[start:end])
-	data["total"], _ = json.Marshal(len(rows))
+	data["total"], _ = json.Marshal(total)
 	envelope["data"], _ = json.Marshal(data)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")

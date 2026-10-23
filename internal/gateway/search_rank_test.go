@@ -13,10 +13,93 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/chenpingonline/fnos-music-ext/internal/preferences"
 	"github.com/chenpingonline/fnos-music-ext/internal/provider"
 )
+
+type rankedSourcesResolver struct{ sources []provider.AccountSource }
+
+func (r rankedSourcesResolver) IsConfigured() bool { return true }
+func (r rankedSourcesResolver) Resolve(string) (provider.Adapter, string, bool) {
+	return r.sources[0].Adapter, r.sources[0].Scope, true
+}
+func (r rankedSourcesResolver) ResolveSources(provider.User) []provider.AccountSource {
+	return r.sources
+}
+
+func TestRankedSearchPreservesPartialResultsAndRetriesFailedSources(t *testing.T) {
+	for _, failOffset := range []int{0, 1} {
+		t.Run(fmt.Sprintf("failure-at-offset-%d", failOffset), func(t *testing.T) {
+			sock := filepath.Join(t.TempDir(), "search.sock")
+			listener, err := net.Listen("unix", sock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"code":0,"data":{"list":[],"total":0}}`))
+			})}
+			go srv.Serve(listener)
+			defer srv.Close()
+			g := New(sock)
+			defer g.Close()
+			var recovered atomic.Bool
+			var calls atomic.Int64
+			ne := &policySource{search: func(q provider.SearchRequest) (provider.SearchPage, error) {
+				calls.Add(1)
+				if q.Offset == failOffset && !recovered.Load() {
+					return provider.SearchPage{}, context.DeadlineExceeded
+				}
+				if q.Offset == 0 {
+					return provider.SearchPage{Tracks: []provider.Track{{ID: "123", Source: "netease", Title: "只若初见", Playable: true}}, Total: 2, HasMore: true}, nil
+				}
+				return provider.SearchPage{Tracks: []provider.Track{{ID: "124", Source: "netease", Title: "只若初见 Live", Playable: true}}, Total: 2}, nil
+			}}
+			qq := &groupedTestSource{name: "qqmusic", track: "0039MnYb0qxYhV"}
+			g.SetAccounts(rankedSourcesResolver{sources: []provider.AccountSource{{Adapter: ne, Scope: "ne"}, {Adapter: qq, Scope: "qq"}}})
+			user := provider.User{FnOSGUID: "alice", Verified: true}
+			request := func(page int) ([]json.RawMessage, error) {
+				t.Helper()
+				r := httptest.NewRequest("GET", fmt.Sprintf("http://localhost/music/api/v1/search/track?q=只若初见&page=%d", page), nil)
+				rows, _, err := g.rankedSearch(context.Background(), r, user, ne, "ne", "只若初见")
+				return rows, err
+			}
+			rows, err := request(1)
+			expected := 1 + failOffset
+			if err != nil || len(rows) != expected {
+				t.Fatalf("lost successful source results: count=%d err=%v", len(rows), err)
+			}
+			if failOffset > 0 && !strings.Contains(string(rows[0]), "[网易云]") {
+				t.Fatal("later-page failure discarded earlier NetEase results")
+			}
+			if !strings.Contains(string(rows[len(rows)-1]), "[QQ音乐]") {
+				t.Fatal("available QQ source was lost")
+			}
+			recovered.Store(true)
+			before := calls.Load()
+			if _, err = request(1); err != nil || calls.Load() != before {
+				t.Fatal("retry cooldown ignored", err)
+			}
+			// Advance just the retry deadline; avoid sleeping and keep the snapshot alive.
+			for _, pool := range g.rankedSearches {
+				pool.retryAfter = time.Now().Add(-time.Second)
+			}
+			paged, err := request(2)
+			if err != nil || len(paged) != expected || calls.Load() != before {
+				t.Fatal("pagination changed snapshot or retried failed source", err)
+			}
+			rows, err = request(1)
+			if err != nil || len(rows) != 3 || calls.Load() <= before {
+				t.Fatalf("new search did not recover the failed source: count=%d err=%v", len(rows), err)
+			}
+			before = calls.Load()
+			if _, err = request(1); err != nil || calls.Load() != before {
+				t.Fatal("complete snapshot was unnecessarily rebuilt", err)
+			}
+		})
+	}
+}
 
 func TestSearchTier(t *testing.T) {
 	for _, tc := range []struct {
@@ -174,8 +257,8 @@ func TestRankedSearchSnapshotPaginationAndIsolation(t *testing.T) {
 	}
 	r := httptest.NewRequest("GET", "http://localhost/music/api/v1/search/track?q=晴天", nil)
 	for _, identity := range []struct{ user, scope string }{{"bob", "account"}, {"alice", "other-account"}} {
-		rows, err := g.rankedSearch(context.Background(), r, provider.User{FnOSGUID: identity.user, Verified: true}, source, identity.scope, "晴天")
-		if err != nil || !strings.Contains(string(rows[3]), "已变化") {
+		rows, total, err := g.rankedSearch(context.Background(), r, provider.User{FnOSGUID: identity.user, Verified: true}, source, identity.scope, "晴天")
+		if err != nil || total != 108 || !strings.Contains(string(rows[3]), "已变化") {
 			t.Fatal("snapshot identity leak", identity, err)
 		}
 	}
@@ -183,14 +266,14 @@ func TestRankedSearchSnapshotPaginationAndIsolation(t *testing.T) {
 	filters := r.URL.Query()
 	filters.Set("artist", "another")
 	r.URL.RawQuery = filters.Encode()
-	filtered, err := g.rankedSearch(context.Background(), r, user, source, "account", "晴天")
+	filtered, _, err := g.rankedSearch(context.Background(), r, user, source, "account", "晴天")
 	if err != nil || !strings.Contains(string(filtered[3]), "已变化") {
 		t.Fatal("search filters reused a stale snapshot", err)
 	}
 	cfg.DeepPage = false
 	settings.Update(cfg)
-	rows, err := g.rankedSearch(context.Background(), r, user, source, "account", "晴天")
-	if err != nil || len(rows) != 103 {
+	rows, total, err := g.rankedSearch(context.Background(), r, user, source, "account", "晴天")
+	if err != nil || total != 103 {
 		t.Fatal("settings revision/page cap not applied", len(rows), err)
 	}
 }
