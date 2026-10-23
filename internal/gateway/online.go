@@ -259,53 +259,70 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
 	defer cancel()
 	localStarted := time.Now()
-	// Fetch official response first, preserve it byte-for-byte if source fails.
-	req := r.Clone(ctx)
-	u := *r.URL
-	u.Scheme = "http"
-	u.Host = "trim-music"
-	req.URL = &u
-	req.RequestURI = ""
-	resp, e := g.client.Do(req)
-	if e != nil {
-		if ctx.Err() != nil {
-			http.Error(w, "search timed out", http.StatusGatewayTimeout)
-			return true
+	ready := make(chan struct{})
+	seed := &localSearchSeed{ready: ready}
+	var resp *http.Response
+	var b []byte
+	var localErr error
+	var localDuration time.Duration
+	// The first official response is both a local result seed and the exact
+	// fallback envelope. Start it alongside online work, not ahead of it.
+	go func() {
+		defer close(ready)
+		defer func() { localDuration = time.Since(localStarted) }()
+		req := r.Clone(ctx)
+		u := *r.URL
+		u.Scheme, u.Host = "http", "trim-music"
+		req.URL, req.RequestURI = &u, ""
+		resp, localErr = g.client.Do(req)
+		if localErr != nil {
+			seed.err = localErr
+			return
 		}
-		return false
-	}
-	defer resp.Body.Close()
-	b, e := io.ReadAll(io.LimitReader(resp.Body, maxOfficialSearchBody+1))
-	if e != nil || len(b) > maxOfficialSearchBody {
-		if ctx.Err() != nil {
-			http.Error(w, "search timed out", http.StatusGatewayTimeout)
-			return true
+		defer resp.Body.Close()
+		b, localErr = io.ReadAll(io.LimitReader(resp.Body, maxOfficialSearchBody+1))
+		if localErr == nil && len(b) > maxOfficialSearchBody {
+			localErr = fmt.Errorf("official search body too large")
 		}
-		return false
-	}
-	if resp.StatusCode != 200 {
-		writeOfficial(w, resp, b)
-		return true
-	}
-	var body struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			List  []json.RawMessage `json:"list"`
-			Total int               `json:"total"`
-		} `json:"data"`
-	}
-	if json.Unmarshal(b, &body) != nil || body.Code != 0 || body.Data.Total < 0 {
-		writeOfficial(w, resp, b)
-		return true
-	}
-	localDuration := time.Since(localStarted)
-	seed := &localSearchSeed{rows: body.Data.List, total: body.Data.Total, start: (page - 1) * size}
-	if unpagedSearch(r) || len(seed.rows) > size {
-		seed.start = 0
-	}
+		if localErr != nil {
+			seed.err = localErr
+			return
+		}
+		var body struct {
+			Code int `json:"code"`
+			Data struct {
+				List  []json.RawMessage `json:"list"`
+				Total int               `json:"total"`
+			} `json:"data"`
+		}
+		if resp.StatusCode != 200 || json.Unmarshal(b, &body) != nil || body.Code != 0 || body.Data.Total < 0 {
+			seed.err = fmt.Errorf("invalid official search response")
+			return
+		}
+		seed.rows, seed.total, seed.start = body.Data.List, body.Data.Total, (page-1)*size
+		if unpagedSearch(r) || len(seed.rows) > size {
+			seed.start = 0
+		}
+	}()
 	mergeStarted := time.Now()
 	rows, total, err := g.rankedSearchSeeded(ctx, r, user, source, accountID, keyword, seed)
+	select {
+	case <-ready:
+	case <-ctx.Done():
+		http.Error(w, "search timed out", http.StatusGatewayTimeout)
+		return true
+	}
+	if localErr != nil {
+		if ctx.Err() != nil {
+			http.Error(w, "search timed out", http.StatusGatewayTimeout)
+			return true
+		}
+		return false
+	}
+	if seed.err != nil {
+		writeOfficial(w, resp, b)
+		return true
+	}
 	if err != nil {
 		diagnostics.Record("search", accountID, err)
 		writeOfficial(w, resp, b)

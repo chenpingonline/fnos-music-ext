@@ -63,6 +63,8 @@ type Service struct {
 	root               string
 	settings           *preferences.Store
 	resolve            Resolver
+	audioUsage         map[string]int64
+	audioBytes         int64
 	jobs               map[string]Job
 	running            map[string]context.CancelFunc
 	clients            map[string]context.Context
@@ -105,6 +107,10 @@ func New(root string, settings *preferences.Store, resolve Resolver) (*Service, 
 				s.jobs[id] = j
 			}
 		}
+	}
+	s.audioUsage = map[string]int64{}
+	for _, j := range s.jobs {
+		s.refreshAudioUsageLocked(j)
 	}
 	s.wg.Add(1)
 	go s.dispatch()
@@ -232,8 +238,9 @@ func (s *Service) Start(ctx context.Context, u provider.User, scope string, trac
 	}
 	if len(s.jobs) >= 1000 {
 		for key, j := range s.jobs {
-			if j.State != "running" && j.State != "queued" {
+			if j.State != "running" && j.State != "queued" && s.running[key] == nil {
 				s.cleanAudio(j)
+				s.refreshAudioUsageLocked(j)
 				delete(s.jobs, key)
 				break
 			}
@@ -269,10 +276,13 @@ func (s *Service) Cancel(id string) error {
 	if cancel := s.running[id]; cancel != nil {
 		cancel()
 	}
-	if j.State != "running" {
+	if s.running[id] == nil {
 		s.cleanAudio(j)
+		s.refreshAudioUsageLocked(j)
 	}
 	j.Bytes = 0
+	j.Percent = 0
+	j.Error = ""
 	j.State = "cancelled"
 	j.Updated = time.Now()
 	s.jobs[id] = j
@@ -294,12 +304,14 @@ func (s *Service) Retry(id string) error {
 	if _, ok = s.resolve(j.User, j.Scope); !ok {
 		return provider.ErrUnauthenticated
 	}
+	old := j
 	j.State = "queued"
 	j.Error = ""
 	j.Updated = time.Now()
 	s.jobs[id] = j
 	delete(s.clients, id)
 	if e := s.persistLocked(); e != nil {
+		s.jobs[id] = old
 		return e
 	}
 	s.signal()
@@ -364,7 +376,7 @@ func (s *Service) dispatch() {
 		}
 		list := []Job{}
 		for _, j := range s.jobs {
-			if j.State == "queued" {
+			if j.State == "queued" && s.running[j.ID] == nil {
 				list = append(list, j)
 			}
 		}
@@ -404,11 +416,16 @@ func (s *Service) run(ctx context.Context, cancel context.CancelFunc, j Job, cli
 	delete(s.running, j.ID)
 	delete(s.clients, j.ID)
 	current := s.jobs[j.ID]
-	if current.State == "cancelled" {
+	// A retry may already be queued while the cancelled worker is unwinding.
+	// Never publish its result over the newer request or run both on the same files.
+	if current.State == "queued" || current.State == "cancelled" {
 		s.cleanAudio(j)
+		s.refreshAudioUsageLocked(j)
 		_ = s.persistLocked()
+		s.signal()
 		return
 	}
+	s.refreshAudioUsageLocked(j)
 	current.Updated = time.Now()
 	current.Warning = warning
 	if err != nil {
@@ -435,6 +452,9 @@ func (s *Service) update(id string, bytes, total int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	j := s.jobs[id]
+	if j.State != "running" {
+		return
+	}
 	j.Bytes = bytes
 	if total > 0 {
 		j.Percent = int(bytes * 100 / total)
@@ -467,6 +487,7 @@ func (s *Service) pruneLocked(user, scope string) {
 		}
 		size -= s.artifactSize(j)
 		s.cleanAudio(j)
+		s.refreshAudioUsageLocked(j)
 		delete(s.jobs, j.ID)
 		if same {
 			count--
@@ -493,6 +514,12 @@ func (s *Service) produce(ctx context.Context, j Job) (string, string, string, e
 	}
 	defer closeCache()
 	j.CacheRoot = cache
+	for _, suffix := range audioSuffixes {
+		if suffix != ".part" {
+			_ = os.Remove(filepath.Join(j.CacheRoot, j.ID+suffix))
+		}
+	}
+	s.refreshAudioUsage(j)
 	part := filepath.Join(j.CacheRoot, j.ID+".part")
 	offset := int64(0)
 	if info, e := os.Lstat(part); e == nil {
@@ -531,6 +558,11 @@ func (s *Service) produce(ctx context.Context, j Job) (string, string, string, e
 		if err == nil && stream.Body != nil && (stream.StatusCode == 200 || stream.StatusCode == 206) {
 			s.mu.Lock()
 			current := s.jobs[j.ID]
+			if current.State != "running" {
+				s.mu.Unlock()
+				stream.Body.Close()
+				return "", "", "", context.Canceled
+			}
 			current.ResolvedQuality = quality
 			current.Validator = streamValidator(stream)
 			s.jobs[j.ID] = current
@@ -576,9 +608,16 @@ func (s *Service) produce(ctx context.Context, j Job) (string, string, string, e
 		f.Close()
 		return "", "", "", e
 	}
+	// Reserve the remaining response once after truncating any obsolete partial.
+	s.refreshAudioUsage(j)
+	if !s.reserveAudio(j.ID, stream.ContentLength) {
+		f.Close()
+		return "", "", "", errors.New("缓存空间不足，请清理或取消旧任务")
+	}
 	total := offset + stream.ContentLength
 	written := offset
 	buf := make([]byte, 128<<10)
+	lastProgress := time.Time{}
 	for {
 		if ctx.Err() != nil {
 			e = ctx.Err()
@@ -586,13 +625,16 @@ func (s *Service) produce(ctx context.Context, j Job) (string, string, string, e
 		}
 		n, readErr := stream.Body.Read(buf)
 		if n > 0 {
-			if written+int64(n) > maxAudioBytes || !s.capacity(j.ID, written+int64(n)) {
+			if written+int64(n) > total {
 				e = errors.New("音频或缓存空间超过上限，请清理或取消旧任务")
 				break
 			}
 			m, we := f.Write(buf[:n])
 			written += int64(m)
-			s.update(j.ID, written, total)
+			if time.Since(lastProgress) >= 200*time.Millisecond || written == total {
+				s.update(j.ID, written, total)
+				lastProgress = time.Now()
+			}
 			if we != nil {
 				e = we
 				break
@@ -636,9 +678,11 @@ func (s *Service) produce(ctx context.Context, j Job) (string, string, string, e
 	warning := ""
 	if j.Mode == "standard" {
 		converted := filepath.Join(j.CacheRoot, j.ID+"-320.mp3")
-		if e = transcode(ctx, final, converted); e != nil {
+		if e = s.audioOutput(j, converted, func(limit int64) error { return transcodeLimit(ctx, final, converted, limit) }); e != nil {
 			return "", "", "", e
 		}
+		_ = os.Remove(final)
+		s.refreshAudioUsage(j)
 		final = converted
 		ext = ".mp3"
 		kind = "audio/mpeg"
@@ -659,17 +703,27 @@ func (s *Service) produce(ctx context.Context, j Job) (string, string, string, e
 					if owned(coverPath, j.CacheRoot) {
 						_ = os.Remove(coverPath)
 					}
-					e = writeSmall(coverPath, cover.Body, 10<<20)
+					if !s.reserveAudio(j.ID, 10<<20) {
+						e = errors.New("封面缓存空间不足")
+					} else {
+						e = writeSmall(coverPath, cover.Body, 10<<20)
+					}
+					s.refreshAudioUsage(j)
 					cover.Body.Close()
 					if e == nil {
 						tagged := filepath.Join(j.CacheRoot, j.ID+"-tagged"+ext)
-						if e = embedCover(ctx, final, coverPath, tagged, j.Track); e == nil {
+						if e = s.audioOutput(j, tagged, func(limit int64) error { return embedCoverLimit(ctx, final, coverPath, tagged, j.Track, limit) }); e == nil {
+							_ = os.Remove(final)
+							s.refreshAudioUsage(j)
 							final = tagged
 						} else {
 							warning = "歌曲已保存，但封面嵌入失败"
 						}
+					} else {
+						warning = "歌曲已保存，但封面缓存写入失败"
 					}
 					os.Remove(coverPath)
+					s.refreshAudioUsage(j)
 				} else {
 					if cover.Body != nil {
 						cover.Body.Close()
@@ -680,7 +734,9 @@ func (s *Service) produce(ctx context.Context, j Job) (string, string, string, e
 		}
 		if FFmpeg() != "" && !strings.Contains(final, "-tagged") {
 			tagged := filepath.Join(j.CacheRoot, j.ID+"-tagged"+ext)
-			if tagAudio(ctx, final, tagged, j.Track) == nil {
+			if s.audioOutput(j, tagged, func(limit int64) error { return tagAudioLimit(ctx, final, tagged, j.Track, limit) }) == nil {
+				_ = os.Remove(final)
+				s.refreshAudioUsage(j)
 				final = tagged
 			} else {
 				warning = "歌曲已保存，但标签写入失败"
@@ -769,22 +825,6 @@ func (s *Service) artifactSize(j Job) int64 {
 		}
 	}
 	return size
-}
-
-func (s *Service) capacity(id string, next int64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	total := next
-	for key, j := range s.jobs {
-		if key == id {
-			continue
-		}
-		if j.State == "completed" && (j.Purpose == "save" || j.Purpose == "bind") {
-			continue
-		}
-		total += j.Bytes
-	}
-	return total <= maxCacheBytes
 }
 
 func (s *Service) Known(id string) bool {

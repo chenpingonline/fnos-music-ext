@@ -444,3 +444,160 @@ func TestTaskPersistenceFailureWarnsAndRetries(t *testing.T) {
 		t.Fatal("warning not cleared")
 	}
 }
+
+func TestCancelThenRetryWaitsForOldWorker(t *testing.T) {
+	for _, limit := range []int{1, 3} {
+		for _, restart := range []string{"retry", "start"} {
+			t.Run(fmt.Sprintf("limit=%d/%s", limit, restart), func(t *testing.T) {
+				started, release := make(chan struct{}), make(chan struct{})
+				var once sync.Once
+				s, cfg := fixture(t, &testSource{play: func(provider.PlaybackRequest) (provider.Stream, error) {
+					once.Do(func() { close(started); <-release })
+					return full(audio()), nil
+				}})
+				c := cfg.Snapshot()
+				c.HandoffMax = limit
+				if err := cfg.Update(c); err != nil {
+					t.Fatal(err)
+				}
+				j := begin(t, s, "cancel-retry", "cache", "high")
+				select {
+				case <-started:
+				case <-time.After(time.Second):
+					close(release)
+					t.Fatal("worker not started")
+				}
+				if err := s.Cancel(j.ID); err != nil {
+					close(release)
+					t.Fatal(err)
+				}
+				if restart == "retry" {
+					if err := s.Retry(j.ID); err != nil {
+						close(release)
+						t.Fatal(err)
+					}
+				} else {
+					begin(t, s, "cancel-retry", "cache", "high")
+				}
+				// A dispatcher tick must not start the queued replacement on the same files.
+				time.Sleep(300 * time.Millisecond)
+				s.mu.Lock()
+				state := s.jobs[j.ID].State
+				s.mu.Unlock()
+				close(release)
+				if state != "queued" {
+					t.Fatalf("replacement started before old worker exited: %s", state)
+				}
+				j = await(t, s, j.ID, "completed")
+				got, err := os.ReadFile(j.Path)
+				if err != nil || !bytes.Equal(got, audio()) {
+					t.Fatal("replacement file invalid", err)
+				}
+			})
+		}
+	}
+}
+
+func TestAudioReservationsIncludeArtifactsAndEvictOldCache(t *testing.T) {
+	root := t.TempDir()
+	s := &Service{jobs: map[string]Job{}, running: map[string]context.CancelFunc{}, audioUsage: map[string]int64{}}
+	for _, track := range []string{"one", "two"} {
+		id := hash(track)
+		j := Job{ID: id, CacheRoot: root, Bytes: 512 << 20, State: "completed", Purpose: "download"}
+		s.jobs[id] = j
+		for _, suffix := range []string{".flac", "-320.mp3"} {
+			f, err := os.Create(filepath.Join(root, id+suffix))
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = f.Truncate(512 << 20)
+			f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		s.refreshAudioUsageLocked(j)
+		s.running[id] = func() {}
+	}
+	if s.audioBytes != maxCacheBytes {
+		t.Fatalf("artifacts omitted: %d", s.audioBytes)
+	}
+	if s.reserveAudio("new", 1) {
+		t.Fatal("overcommitted active artifacts")
+	}
+	for id := range s.running {
+		delete(s.running, id)
+	}
+	if !s.reserveAudio("new", 128<<10) {
+		t.Fatal("old cache not reclaimed")
+	}
+	if len(s.jobs) != 1 || s.audioBytes > maxCacheBytes {
+		t.Fatal("incorrect eviction/accounting", s.audioBytes, len(s.jobs))
+	}
+}
+
+func TestConcurrentAudioReservationsCannotOvercommit(t *testing.T) {
+	s := &Service{jobs: map[string]Job{}, audioUsage: map[string]int64{}}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	successes := 0
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			if s.reserveAudio(fmt.Sprint(id), 512<<20) {
+				mu.Lock()
+				successes++
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+	if successes != 4 || s.audioBytes != maxCacheBytes {
+		t.Fatal("capacity oversubscribed", successes, s.audioBytes)
+	}
+}
+
+func TestLimitedAudioOutputRejectsTruncatedResultAndReleasesReservation(t *testing.T) {
+	root := t.TempDir()
+	j := Job{ID: hash("output"), CacheRoot: root}
+	s := &Service{jobs: map[string]Job{j.ID: j}, audioUsage: map[string]int64{}}
+	output := filepath.Join(root, j.ID+"-320.mp3")
+	err := s.audioOutput(j, output, func(limit int64) error {
+		f, e := os.Create(output)
+		if e != nil {
+			return e
+		}
+		defer f.Close()
+		return f.Truncate(limit)
+	})
+	if err == nil {
+		t.Fatal("size-limited output was published")
+	}
+	if s.audioBytes != 0 {
+		t.Fatal("reservation leaked", s.audioBytes)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatal("incomplete output retained", err)
+	}
+}
+
+func TestMP3DownloadReleasesOriginalArtifact(t *testing.T) {
+	if FFmpeg() == "" {
+		t.Skip("ffmpeg unavailable")
+	}
+	s, _ := fixture(t, &testSource{play: func(provider.PlaybackRequest) (provider.Stream, error) { return full(audio()), nil }})
+	j := await(t, s, begin(t, s, "mp3-budget", "download", "standard").ID, "completed")
+	if _, err := os.Stat(filepath.Join(j.CacheRoot, j.ID+".wav")); !os.IsNotExist(err) {
+		t.Fatal("original artifact retained", err)
+	}
+	info, err := os.Stat(j.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.audioBytes != info.Size() || s.audioUsage[j.ID] != info.Size() {
+		t.Fatal("transcoded file size not accounted", s.audioBytes, info.Size())
+	}
+}

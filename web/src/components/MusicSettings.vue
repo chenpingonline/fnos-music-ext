@@ -2,11 +2,11 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { request, errorMessage } from '../api'
 import PlaylistCover from './PlaylistCover.vue'
+import DownloadTasks from './DownloadTasks.vue'
 import type { Account, MusicPlaylist } from '../useAccountPanel'
 
 type Selection = {id:string;title:string;kind:string;cover_url?:string}
 type Policy = {search_sources:string[]|null;playlist_sources:string[]|null;quality:string;download_quality:string;search_timeout:number;search_probe:boolean;deep_page:boolean;max_pages:number;personal_playlists:boolean;personal_selections?:Record<string,string[]>;hot:boolean;daily:boolean;public_enabled:boolean;public:Selection[];save_enabled:boolean;auto_cover:boolean;auto_lyrics:boolean;cache_max:number;cache_dir:string;cover_cache_dir:string;download_dir:string;auto_bind:boolean;bind_timeout:number;handoff_max:number;scan_path:string;filename:string}
-type Task = {id:string;user:string;track:{title:string;artists:string[]};state:string;purpose:string;percent:number;bytes:number;error?:string;warning?:string;path?:string}
 type Card = {id:string;title:string;cover_url?:string;track_count:number}
 const emit=defineEmits<{dirty:[value:boolean];busy:[value:boolean];access:[]}>()
 const props = defineProps<{page:'music'|'recommend'|'storage'|'tasks';accounts:Account[];hasAccess:boolean;pickDirectory:()=>Promise<string|undefined>}>()
@@ -14,7 +14,7 @@ const discoveryAccounts=computed(()=>props.accounts.filter(a=>!a.bridge_url.star
 const policy = ref<Policy>(), baseline = ref(''), error = ref(''), notice = ref(''), busy = ref(false), loading = ref(true)
 type CoverCache = {directory:string;files:number;bytes:number;max_bytes:number;ttl_days:number}
 const coverCache=ref<CoverCache>(), confirmCoverClear=ref(false)
-const jobs = ref<Task[]>([]), ffmpeg = ref(false), taskBusy = ref('')
+const downloadTasks = ref<InstanceType<typeof DownloadTasks>>()
 const account = ref(''), kind = ref('chart'), category = ref('全部'), pageNo = ref(1), more = ref(false), cards = ref<Card[]>([]), categories = ref<string[]>(['全部']), discovering = ref(false)
 const personalAccount = ref(''), personalCards = ref<MusicPlaylist[]>([]), personalLoading = ref(false), personalError = ref('')
 let personalController:AbortController|undefined
@@ -41,10 +41,9 @@ async function loadPersonal() {
 }
 const dirty = computed(()=>!!policy.value && JSON.stringify(policy.value)!==baseline.value)
 const mainController = new AbortController()
-let discoveryController:AbortController|undefined, taskController:AbortController|undefined, timer:ReturnType<typeof setTimeout>|undefined, disposed=false, coverRevision=0, discoveryRevision=0, taskRevision=0
+let discoveryController:AbortController|undefined, disposed=false, coverRevision=0, discoveryRevision=0
 const qualityOptions = [{value:'high',label:'高音质',hint:'优先最高可用档位，失败逐级降档'},{value:'balanced',label:'平衡',hint:'优先中间档，失败先降低再尝试更高档'},{value:'smooth',label:'流畅',hint:'优先标准品质，缩短首次加载时间'}]
 const downloadOptions = [{value:'app',label:'跟随 App',hint:'标准档提供 MP3 320k，其余提供原文件'},{value:'original',label:'无损原文件',hint:'始终交付音源授权的最高可用原文件'},{value:'standard',label:'MP3 320k',hint:'下载统一转换为 MP3，需要 FFmpeg'}]
-const labels:Record<string,string>={queued:'排队中',running:'下载中',paused:'已暂停',completed:'已完成',failed:'失败',cancelled:'已取消',cache:'滚动缓存',save:'边听边存',bind:'收藏入库',download:'App 下载'}
 const selectFields = computed(()=>props.page==='music'?[{key:'quality' as const,title:'播放音质',options:qualityOptions},{key:'download_quality' as const,title:'下载音质',options:downloadOptions}]:[])
 function clear(){error.value='';notice.value=''}
 async function load(){loading.value=true;clear();try{policy.value=await request<Policy>('/settings','GET',undefined,mainController.signal);policy.value.public??=[];policy.value.search_sources??=['netease','qqmusic'];policy.value.playlist_sources??=['netease','qqmusic'];policy.value.cover_cache_dir??='';baseline.value=JSON.stringify(policy.value);if(props.page==='storage')await loadCoverCache()}catch(e){if(!disposed)error.value=errorMessage(e)}finally{if(!disposed)loading.value=false}}
@@ -72,30 +71,25 @@ async function discover(nextPage=1){
  }catch(e){if(!disposed&&revision===discoveryRevision)error.value=errorMessage(e)}finally{if(!disposed&&revision===discoveryRevision)discovering.value=false}
 }
 async function loadCategories(){if(!account.value)return;const chosen=account.value;try{const result=await request<{list:string[]}>('/discovery?'+new URLSearchParams({account:chosen,kind:'categories'}),'GET',undefined,mainController.signal);if(!disposed&&chosen===account.value)categories.value=result.list??['全部']}catch{/* discovery presents a retriable error separately */}}
-function refreshTasks(){clearTimeout(timer);void tasks()}
-defineExpose({reload:load,reset})
+defineExpose({reload:()=>props.page==='tasks'?downloadTasks.value?.reload():load(),reset})
 watch(dirty,value=>{emit('dirty',value);confirmCoverClear.value=false})
 watch(busy,value=>emit('busy',value))
-async function tasks(){
- if(disposed||props.page!=='tasks')return
- taskController?.abort();const current=new AbortController();taskController=current;const revision=++taskRevision
- try{const result=await request<{list:Task[];ffmpeg:boolean}>('/tasks','GET',undefined,current.signal);if(disposed||revision!==taskRevision)return;jobs.value=result.list??[];ffmpeg.value=result.ffmpeg}catch(e){if(!disposed&&!current.signal.aborted&&revision===taskRevision)error.value=errorMessage(e)}finally{if(!disposed&&revision===taskRevision&&props.page==='tasks')timer=setTimeout(()=>void tasks(),3000)}
-}
-async function taskAction(job:Task,action:'retry'|'cancel'){if(taskBusy.value)return;taskBusy.value=job.id;clear();try{await request('/tasks/'+job.id+'/'+action,'POST',{},mainController.signal);if(disposed)return;notice.value=action==='retry'?'任务已提交重试。':'任务已取消。';clearTimeout(timer);await tasks()}catch(e){if(!disposed)error.value=errorMessage(e)}finally{if(!disposed)taskBusy.value=''}}
 watch(()=>props.accounts,()=>{if(!props.accounts.some(a=>a.id===personalAccount.value))personalAccount.value=props.accounts[0]?.id??'';if(!discoveryAccounts.value.some(a=>a.id===account.value))account.value=discoveryAccounts.value[0]?.id??''},{immediate:true})
 watch(personalAccount,()=>{if(props.page==='recommend')void loadPersonal()})
 watch([account,kind,category],()=>{if(props.page==='recommend'){void discover();if(account.value)void loadCategories()}})
-watch(()=>props.page,()=>{clear();confirmCoverClear.value=false;if(props.page==='storage')void loadCoverCache();clearTimeout(timer);taskRevision++;taskController?.abort();discoveryController?.abort();discoveryRevision++;if(props.page==='tasks')void tasks();if(props.page==='recommend'){void discover();void loadPersonal()}else personalController?.abort()})
-onMounted(()=>{void load();if(props.page==='tasks')void tasks();if(props.page==='recommend'){void discover();void loadCategories();void loadPersonal()}})
-onUnmounted(()=>{emit('dirty',false);emit('busy',false);disposed=true;personalController?.abort();mainController.abort();discoveryController?.abort();taskController?.abort();clearTimeout(timer)})
+watch(()=>props.page,()=>{if(props.page!=='tasks'&&!policy.value)void load();clear();confirmCoverClear.value=false;if(props.page==='storage')void loadCoverCache();discoveryController?.abort();discoveryRevision++;if(props.page==='recommend'){void discover();void loadPersonal()}else personalController?.abort()})
+onMounted(()=>{if(props.page!=='tasks')void load();if(props.page==='recommend'){void discover();void loadCategories();void loadPersonal()}})
+onUnmounted(()=>{emit('dirty',false);emit('busy',false);disposed=true;personalController?.abort();mainController.abort();discoveryController?.abort()})
 </script>
 <template>
 <div class="music-settings">
+ <DownloadTasks v-if="page==='tasks'" ref="downloadTasks"/>
+ <template v-else>
  <div v-if="error" class="feedback error" role="alert">{{error}}</div><div v-if="notice" class="feedback success" role="status">{{notice}}</div>
  <div v-if="loading" class="empty-state">正在读取设置…</div>
  <div v-else-if="!policy" class="empty-state"><p>设置读取失败</p><button class="button secondary" @click="load">重新读取</button></div>
  <template v-else>
- <form v-if="page!=='tasks'" id="music-settings-form" @submit.prevent="save">
+ <form id="music-settings-form" @submit.prevent="save">
  <fieldset :disabled="busy" class="settings-fields">
  <template v-if="page==='music'">
  <section class="setting-section"><h2>搜索来源</h2><div class="source-picker"><span id="search-sources-label">参与搜索的平台</span><div role="group" aria-labelledby="search-sources-label"><label>网易云音乐<input v-model="policy.search_sources" type="checkbox" value="netease"/></label><label>QQ 音乐<input v-model="policy.search_sources" type="checkbox" value="qqmusic"/></label></div></div><p class="muted">可单选或多选；不选时只搜索本地音乐。仅使用在“访问设置”中授权给用户的账号。多个平台的同名歌曲分别显示来源。</p></section>
@@ -130,7 +124,8 @@ onUnmounted(()=>{emit('dirty',false);emit('busy',false);disposed=true;personalCo
  </template>
  </fieldset><Teleport defer to="#settings-footer"><div class="save-bar" role="region" aria-label="保存设置"><span class="muted">{{dirty?'有尚未保存的修改':'设置已同步'}}</span><button type="button" class="button secondary compact" :disabled="busy||!dirty" @click="reset">撤销修改</button><button type="submit" form="music-settings-form" class="button primary compact" :disabled="busy||!dirty">{{busy?'保存中…':'保存设置'}}</button></div></Teleport>
  </form>
- <template v-else><div class="context-bar"><span class="badge" :class="{accent:ffmpeg}">{{ffmpeg?'FFmpeg 可用':'FFmpeg 不可用'}}</span><span class="muted">自动刷新 · {{jobs.length}} 个任务</span><button class="text-button" @click="refreshTasks">立即刷新</button></div><div v-if="!jobs.length" class="empty-state"><h3>暂无下载任务</h3><p>播放在线歌曲、下载或收藏自动入库后，任务会出现在这里。</p></div><article v-for="job in jobs" :key="job.id" class="task-row"><div class="task-heading"><div><h3>{{job.track.title}}</h3><small>{{job.track.artists.join(' / ')}} · {{labels[job.purpose]||job.purpose}} · {{job.user}}</small></div><span class="badge" :class="{accent:job.state==='running',success:job.state==='completed'}">{{labels[job.state]||job.state}}</span></div><progress :value="job.percent" max="100" :aria-label="job.track.title+' 下载进度'"/><div class="task-foot"><span>{{job.percent}}% · {{(job.bytes/1048576).toFixed(1)}} MiB</span><div class="row-actions"><button v-if="job.state!=='running'&&job.state!=='queued'" class="text-button" :disabled="!!taskBusy" @click="taskAction(job,'retry')">{{job.state==='completed'?'重试绑定':'重试'}}</button><button v-if="job.state==='running'||job.state==='queued'||job.state==='paused'||job.state==='failed'" class="text-button danger" :disabled="!!taskBusy" @click="taskAction(job,'cancel')">取消</button></div></div><p v-if="job.error" class="task-error" role="status">{{job.error}}</p><p v-if="job.warning" class="task-error">{{job.warning}}</p><details v-if="job.path" class="task-details"><summary>文件位置</summary><code>{{job.path}}</code></details></article></template>
+
+ </template>
  </template>
 </div>
 </template>
@@ -183,22 +178,6 @@ input:disabled, select:disabled { opacity: .5; cursor: not-allowed; }
 .selected-row { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
 .selected-row > div:not(.playlist-cover) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .pagination { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
-.task-row { padding: 20px; margin-bottom: 12px; border: 1px solid var(--line-soft); border-radius: 10px; }
-.task-heading, .task-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.task-heading > div { min-width: 0; overflow-wrap: anywhere; }
-.task-heading small { font-size: 11px; }
-.task-heading h3 { font-size: 14px; font-weight: 600; }
-.task-heading .badge { flex-shrink: 0; }
-.task-foot { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.task-error, .danger { color: var(--danger); }
-.task-error { font-size: 12px; margin-top: 8px; }
-progress { display: block; appearance: none; border: 0; border-radius: 8px; overflow: hidden; width: 100%; height: 4px; background: var(--line-soft); accent-color: var(--accent); margin: 18px 0 12px; }
-progress::-webkit-progress-bar { background: var(--line-soft); }
-progress::-webkit-progress-value { background: var(--accent); border-radius: 8px; }
-progress::-moz-progress-bar { background: var(--accent); border-radius: 8px; }
-.task-details { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
-.task-details summary { color: var(--muted); font-size: 11px; }
-.task-row code { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; }
 .cache-directory { overflow-wrap: anywhere; margin-bottom: 12px; }
 @media(max-width:1100px) { .field-grid { grid-template-columns: 1fr; gap: 14px; } .card-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media(max-width:800px) { .options { grid-template-columns: 1fr; gap: 8px; } .option { padding: 12px 14px; } }
@@ -211,7 +190,5 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 8px; }
   .save-bar > span::before { display: none; }
   .save-bar .button { padding: 6px 9px; }
   .selected-row { gap: 8px; flex-wrap: wrap; }
-  .task-row { padding: 16px; }
-  .task-heading { align-items: flex-start; }
 }
 </style>

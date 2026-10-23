@@ -21,6 +21,8 @@ const unpagedSearchTimeout = 3 * time.Second
 const unpagedSourceBudget = 100
 
 type localSearchSeed struct {
+	ready        <-chan struct{}
+	err          error
 	rows         []json.RawMessage
 	start, total int
 }
@@ -247,6 +249,18 @@ func (g *Gateway) rankedSearchSeeded(ctx context.Context, r *http.Request, user 
 				fetchCtx, cancel := context.WithTimeout(ctx, searchSourceTimeout)
 				defer cancel()
 				if i == 0 {
+					if localSeed != nil && localSeed.ready != nil {
+						select {
+						case <-localSeed.ready:
+						case <-fetchCtx.Done():
+							errs[i] = fetchCtx.Err()
+							return
+						}
+						if localSeed.err != nil {
+							errs[i] = localSeed.err
+							return
+						}
+					}
 					if rows, total, ok := localSeed.window(state.offset); ok {
 						localRows, results[i].Total = rows, total
 						return

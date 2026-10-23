@@ -201,7 +201,7 @@ onUnmounted(() => {disposed=true; accountStatuses.cancel(); usersController?.abo
     <div class="sidebar-footer"><span class="connection"><i :class="{online:proxyReady}"/>{{proxyText}}</span><span class="version">v{{version}} <span>预览版</span></span></div>
   </aside>
   <main class="workspace" :aria-busy="refreshing" :aria-label="currentPage.label">
-    <header class="page-header" aria-label="页面操作"><div class="header-actions"><button class="button secondary compact" :disabled="busy||settingsDirty||settingsBusy" @click="refresh"><AppIcon name="refresh" :class="{spinning:refreshing}"/><span>{{refreshing?'刷新中':'刷新'}}</span></button><button v-if="selected==='accounts'" class="button primary compact" :disabled="busy || !loaded" @click="openAdd"><AppIcon name="plus"/>添加账号</button></div></header>
+    <header v-if="selected!=='tasks'" class="page-header" aria-label="页面操作"><div class="header-actions"><button class="button secondary compact" :disabled="busy||settingsDirty||settingsBusy" @click="refresh"><AppIcon name="refresh" :class="{spinning:refreshing}"/><span>{{refreshing?'刷新中':'刷新'}}</span></button><button v-if="selected==='accounts'" class="button primary compact" :disabled="busy || !loaded" @click="openAdd"><AppIcon name="plus"/>添加账号</button></div></header>
     <div ref="content" class="page-scroll" :class="{'is-scrolling':scrolling}" @scroll.passive="onScroll">
       <div class="page-content">
         <div v-if="error && !showAdd && !deleting" class="feedback error" role="alert"><AppIcon name="alert"/><span>{{error}}</span><button class="icon-button" aria-label="关闭错误提示" @click="error='' "><AppIcon name="close"/></button></div>

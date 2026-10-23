@@ -61,10 +61,16 @@ func command(ctx context.Context, args ...string) error {
 	return nil
 }
 func transcode(ctx context.Context, input, output string) error {
-	return command(ctx, "-protocol_whitelist", "file,pipe", "-i", input, "-map", "0:a:0", "-vn", "-c:a", "libmp3lame", "-b:a", "320k", "-id3v2_version", "3", output)
+	return transcodeLimit(ctx, input, output, maxAudioBytes)
+}
+func transcodeLimit(ctx context.Context, input, output string, limit int64) error {
+	return command(ctx, "-protocol_whitelist", "file,pipe", "-i", input, "-map", "0:a:0", "-vn", "-c:a", "libmp3lame", "-b:a", "320k", "-id3v2_version", "3", "-fs", fmt.Sprint(limit), output)
 }
 func embedCover(ctx context.Context, input, cover, output string, t provider.Track) error {
-	return command(ctx, "-protocol_whitelist", "file,pipe", "-i", input, "-protocol_whitelist", "file,pipe", "-i", cover, "-map", "0:a:0", "-map", "1:v:0", "-c:a", "copy", "-c:v", "mjpeg", "-disposition:v:0", "attached_pic", "-metadata", "title="+t.Title, "-metadata", "artist="+strings.Join(t.Artists, " / "), "-metadata", "album="+t.Album, output)
+	return embedCoverLimit(ctx, input, cover, output, t, maxAudioBytes)
+}
+func embedCoverLimit(ctx context.Context, input, cover, output string, t provider.Track, limit int64) error {
+	return command(ctx, "-protocol_whitelist", "file,pipe", "-i", input, "-protocol_whitelist", "file,pipe", "-i", cover, "-map", "0:a:0", "-map", "1:v:0", "-c:a", "copy", "-c:v", "mjpeg", "-disposition:v:0", "attached_pic", "-metadata", "title="+t.Title, "-metadata", "artist="+strings.Join(t.Artists, " / "), "-metadata", "album="+t.Album, "-fs", fmt.Sprint(limit), output)
 }
 func safeName(template string, t provider.Track) string {
 	name := strings.NewReplacer("{artist}", strings.Join(t.Artists, " & "), "{title}", t.Title, "{source}", t.Source).Replace(template)
@@ -204,7 +210,10 @@ func writeExclusive(path string, b []byte) error {
 }
 
 func tagAudio(ctx context.Context, input, output string, t provider.Track) error {
-	return command(ctx, "-protocol_whitelist", "file,pipe", "-i", input, "-map", "0:a:0", "-c:a", "copy", "-metadata", "title="+t.Title, "-metadata", "artist="+strings.Join(t.Artists, " / "), "-metadata", "album="+t.Album, output)
+	return tagAudioLimit(ctx, input, output, t, maxAudioBytes)
+}
+func tagAudioLimit(ctx context.Context, input, output string, t provider.Track, limit int64) error {
+	return command(ctx, "-protocol_whitelist", "file,pipe", "-i", input, "-map", "0:a:0", "-c:a", "copy", "-metadata", "title="+t.Title, "-metadata", "artist="+strings.Join(t.Artists, " / "), "-metadata", "album="+t.Album, "-fs", fmt.Sprint(limit), output)
 }
 
 // pcmBytes counts decoded mono 16-bit samples without retaining audio in memory.

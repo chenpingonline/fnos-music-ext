@@ -339,3 +339,30 @@ func TestQuickSearchDeadlineCoversAllBatches(t *testing.T) {
 		t.Fatal("batch deadlines accumulated", w.Code, len(body.Data.List), body.Data.Total, elapsed)
 	}
 }
+
+func TestSearchStartsOnlineBeforeOfficialResponse(t *testing.T) {
+	onlineStarted := make(chan struct{})
+	var started atomic.Bool
+	g := incrementalGateway(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-onlineStarted:
+			emptyLocalSearch(w, r)
+		case <-r.Context().Done():
+		}
+	})
+	source := &incrementalSource{name: "netease", search: func(_ context.Context, _ provider.SearchRequest) (provider.SearchPage, error) {
+		if started.CompareAndSwap(false, true) {
+			close(onlineStarted)
+		}
+		return provider.SearchPage{Tracks: []provider.Track{{ID: "1", Source: "netease", Title: "parallel", Playable: true}}, Total: 1}, nil
+	}}
+	g.SetOnline(source, "alice")
+	r := httptest.NewRequest("GET", "http://local/music/api/v1/search/track?q=parallel", nil)
+	w := httptest.NewRecorder()
+	if !g.search(w, r, provider.User{FnOSGUID: "alice", Verified: true}, source, "legacy", "parallel") {
+		t.Fatal("search not handled")
+	}
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "parallel") {
+		t.Fatalf("online did not overlap official search: %d %s", w.Code, w.Body.String())
+	}
+}
