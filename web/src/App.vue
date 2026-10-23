@@ -22,15 +22,15 @@ const settingsRef=ref<InstanceType<typeof MusicSettings>>()
 const settingsDirty=ref(false),settingsBusy=ref(false),pendingPage=ref<Page|null>(null)
 const musicPages=['music','recommend','storage','tasks']
 const version = __APP_VERSION__
-const pages: {id: Page; label: string; icon: string; description: string}[] = [
-  {id:'accounts',label:'音源账号',icon:'user',description:'管理音乐平台账号，登录后即可使用歌单、搜索等功能。'},
-  {id:'music',label:'播放与搜索',icon:'search',description:'音质选择、下载品质与搜索策略'},
-  {id:'recommend',label:'推荐歌单',icon:'list',description:'管理每日推荐、榜单和公共歌单'},
-  {id:'storage',label:'存储设置',icon:'drive',description:'缓存目录、边听边存与收藏自动入库'},
-  {id:'tasks',label:'下载任务',icon:'download',description:'查看下载进度、失败原因与入库绑定状态'},
-  {id:'access',label:'访问设置',icon:'accounts',description:'设置飞牛用户与音源账号之间的访问关系'},
-  {id:'status',label:'运行概览',icon:'status',description:'查看官方音乐代理与账号配置状态'},
-  {id:'help',label:'帮助与诊断',icon:'help',description:'使用说明与本机故障排查'},
+const pages: {id: Page; label: string; icon: string}[] = [
+  {id:'accounts',label:'音源账号',icon:'user'},
+  {id:'music',label:'播放与搜索',icon:'search'},
+  {id:'recommend',label:'推荐歌单',icon:'list'},
+  {id:'storage',label:'存储设置',icon:'drive'},
+  {id:'tasks',label:'下载任务',icon:'download'},
+  {id:'access',label:'访问设置',icon:'accounts'},
+  {id:'status',label:'运行概览',icon:'status'},
+  {id:'help',label:'帮助与诊断',icon:'help'},
 ]
 const navGroups = [{label:'音乐', pages:pages.slice(0,5)}, {label:'管理', pages:pages.slice(5)}]
 const selected = ref<Page>('accounts')
@@ -200,8 +200,8 @@ onUnmounted(() => {disposed=true; accountStatuses.cancel(); usersController?.abo
     <nav aria-label="功能导航"><div v-for="group in navGroups" :key="group.label" class="nav-group"><p class="nav-group-label">{{group.label}}</p><button v-for="page in group.pages" :key="page.id" :class="{active:selected===page.id}" :aria-current="selected===page.id ? 'page' : undefined" :disabled="operation!==''||settingsBusy" @click="navigate(page.id)"><AppIcon :name="page.icon"/><span>{{page.label}}</span></button></div></nav>
     <div class="sidebar-footer"><span class="connection"><i :class="{online:proxyReady}"/>{{proxyText}}</span><span class="version">v{{version}} <span>预览版</span></span></div>
   </aside>
-  <main class="workspace" :aria-busy="refreshing">
-    <header class="page-header"><div><h1>{{currentPage.label}}</h1><p>{{currentPage.description}}</p></div><div class="header-actions"><button class="button secondary compact" :disabled="busy||settingsDirty||settingsBusy" @click="refresh"><AppIcon name="refresh" :class="{spinning:refreshing}"/><span>{{refreshing?'刷新中':'刷新'}}</span></button><button v-if="selected==='accounts'" class="button primary compact" :disabled="busy || !loaded" @click="openAdd"><AppIcon name="plus"/>添加账号</button></div></header>
+  <main class="workspace" :aria-busy="refreshing" :aria-label="currentPage.label">
+    <header class="page-header" aria-label="页面操作"><div class="header-actions"><button class="button secondary compact" :disabled="busy||settingsDirty||settingsBusy" @click="refresh"><AppIcon name="refresh" :class="{spinning:refreshing}"/><span>{{refreshing?'刷新中':'刷新'}}</span></button><button v-if="selected==='accounts'" class="button primary compact" :disabled="busy || !loaded" @click="openAdd"><AppIcon name="plus"/>添加账号</button></div></header>
     <div ref="content" class="page-scroll" :class="{'is-scrolling':scrolling}" @scroll.passive="onScroll">
       <div class="page-content">
         <div v-if="error && !showAdd && !deleting" class="feedback error" role="alert"><AppIcon name="alert"/><span>{{error}}</span><button class="icon-button" aria-label="关闭错误提示" @click="error='' "><AppIcon name="close"/></button></div>
