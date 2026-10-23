@@ -228,6 +228,8 @@ func (g *Gateway) rankedSearchSeeded(ctx context.Context, r *http.Request, user 
 		pool.seenLocal = map[string]bool{}
 		pool.partial = false
 	}
+	quickSlots := make(chan struct{}, 4)
+	var quickCandidates []searchCandidate
 	for len(pool.rows) < needed && ctx.Err() == nil {
 		results := make([]provider.SearchPage, len(pool.states))
 		localRows := []json.RawMessage{}
@@ -252,7 +254,11 @@ func (g *Gateway) rankedSearchSeeded(ctx context.Context, r *http.Request, user 
 					localRows, results[i].Total, errs[i] = g.localSearchBatch(fetchCtx, r, state.offset)
 				} else {
 					s := selected[i-1]
-					results[i], errs[i] = g.searchWindowLimited(fetchCtx, user, s.Adapter, s.Scope, keyword, state.offset, rankedSearchBatch, rankedSearchBatch, budget)
+					if quick {
+						results[i], errs[i] = g.parallelQuickSource(fetchCtx, user, s.Adapter, keyword, budget, quickSlots)
+					} else {
+						results[i], errs[i] = g.searchWindowLimited(fetchCtx, user, s.Adapter, s.Scope, keyword, state.offset, rankedSearchBatch, rankedSearchBatch, budget)
+					}
 				}
 			}(i, state)
 		}
@@ -329,9 +335,15 @@ func (g *Gateway) rankedSearchSeeded(ctx context.Context, r *http.Request, user 
 			return nil, 0, fmt.Errorf("all search sources unavailable")
 		}
 		pool.rows = append(pool.rows, rankSearch(keyword, candidates)...)
+		if quick {
+			quickCandidates = append(quickCandidates, candidates...)
+		}
 		if pool.partial {
 			pool.retryAfter = time.Now().Add(10 * time.Second)
 		}
+	}
+	if len(quickCandidates) > 0 {
+		pool.rows = rankSearch(keyword, quickCandidates)
 	}
 	if ctx.Err() != nil && len(pool.rows) == 0 {
 		return nil, 0, ctx.Err()

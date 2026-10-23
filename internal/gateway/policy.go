@@ -113,35 +113,10 @@ func (g *Gateway) searchWindowLimited(ctx context.Context, user provider.User, s
 			seen[t.ID] = true
 			seen["meta:"+trackKey(t)] = true
 		}
-		for _, t := range result.Tracks {
-			if t.Source == "" {
-				t.Source = source.ID()
-			}
-			_, valid := fnmusic.EncodeTrackID(t.Source, t.ID)
-			if t.Source != source.ID() {
-				continue
-			}
-			if !valid || !t.Playable || seen[t.ID] || seen["meta:"+trackKey(t)] {
-				continue
-			}
-			if c.SearchProbe {
-				probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-				s, err := playQuality(probeCtx, source, user, t.ID, c.Quality, "__HEAD__")
-				if s.Body != nil {
-					io.Copy(io.Discard, io.LimitReader(s.Body, 1))
-					s.Body.Close()
-				}
-				cancel()
-				if err != nil || (s.StatusCode != 200 && s.StatusCode != 206) {
-					if ctx.Err() != nil {
-						return pool.window(start, count, len(pool.tracks)), ctx.Err()
-					}
-					continue
-				}
-			}
-			seen[t.ID] = true
-			seen["meta:"+trackKey(t)] = true
-			pool.tracks = append(pool.tracks, t)
+		tracks, filterErr := filterSearchTracks(ctx, user, source, result.Tracks, seen, c)
+		pool.tracks = append(pool.tracks, tracks...)
+		if filterErr != nil {
+			return pool.window(start, count, len(pool.tracks)), filterErr
 		}
 		pool.offset += len(result.Tracks)
 		pool.total = result.Total
@@ -173,4 +148,39 @@ func (pool *searchPool) window(start, count, total int) provider.SearchPage {
 }
 func trackKey(t provider.Track) string {
 	return strings.ToLower(strings.TrimSpace(t.Title)) + "\x00" + strings.ToLower(strings.Join(t.Artists, " ")) + "\x00" + strings.ToLower(strings.TrimSpace(t.Album)) + fmt.Sprintf("\x00%d", t.DurationMS)
+}
+
+func filterSearchTracks(ctx context.Context, user provider.User, source provider.Adapter, tracks []provider.Track, seen map[string]bool, c preferences.Config) ([]provider.Track, error) {
+	accepted := []provider.Track{}
+	for _, t := range tracks {
+		if t.Source == "" {
+			t.Source = source.ID()
+		}
+		_, valid := fnmusic.EncodeTrackID(t.Source, t.ID)
+		if t.Source != source.ID() {
+			continue
+		}
+		if !valid || !t.Playable || seen[t.ID] || seen["meta:"+trackKey(t)] {
+			continue
+		}
+		if c.SearchProbe {
+			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			s, err := playQuality(probeCtx, source, user, t.ID, c.Quality, "__HEAD__")
+			if s.Body != nil {
+				io.Copy(io.Discard, io.LimitReader(s.Body, 1))
+				s.Body.Close()
+			}
+			cancel()
+			if err != nil || (s.StatusCode != 200 && s.StatusCode != 206) {
+				if ctx.Err() != nil {
+					return accepted, ctx.Err()
+				}
+				continue
+			}
+		}
+		seen[t.ID] = true
+		seen["meta:"+trackKey(t)] = true
+		accepted = append(accepted, t)
+	}
+	return accepted, nil
 }

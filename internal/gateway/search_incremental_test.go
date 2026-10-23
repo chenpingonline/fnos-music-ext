@@ -204,7 +204,7 @@ func TestOfficialWebSearchWithoutPaginationIsNotTruncatedAt50(t *testing.T) {
 			all, total := request("")
 			want, calls := 100, int64(8)
 			if interrupted {
-				want, calls = 60, 7
+				want, calls = 60, 8
 			}
 			if len(all) != want || total != want || source.calls.Load() != calls {
 				t.Fatal("unpaged Web response was truncated or advertised inaccessible rows", len(all), total, source.calls.Load())
@@ -306,6 +306,10 @@ func TestQuickSearchCapsEachSourceAndReusesOfficialResults(t *testing.T) {
 func TestQuickSearchDeadlineCoversAllBatches(t *testing.T) {
 	g := incrementalGateway(t, emptyLocalSearch)
 	source := &incrementalSource{name: "netease", search: func(ctx context.Context, q provider.SearchRequest) (provider.SearchPage, error) {
+		if q.Offset == 80 {
+			<-ctx.Done()
+			return provider.SearchPage{}, ctx.Err()
+		}
 		select {
 		case <-time.After(800 * time.Millisecond):
 		case <-ctx.Done():
