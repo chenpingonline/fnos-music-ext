@@ -62,8 +62,20 @@ func (g *Gateway) searchWindow(ctx context.Context, user provider.User, source p
 }
 
 func (g *Gateway) searchWindowSized(ctx context.Context, user provider.User, source provider.Adapter, scope, keyword string, start, count, batchSize int) (provider.SearchPage, error) {
+	return g.searchWindowLimited(ctx, user, source, scope, keyword, start, count, batchSize, 0)
+}
+
+func (g *Gateway) searchWindowLimited(ctx context.Context, user provider.User, source provider.Adapter, scope, keyword string, start, count, batchSize, candidateLimit int) (provider.SearchPage, error) {
 	c := g.policy()
-	key := fmt.Sprintf("%s\x00%s\x00%d\x00%s\x00%d", user.FnOSGUID, scope, g.revision(), keyword, batchSize)
+	budget := c.MaxPages * 100
+	if !c.DeepPage {
+		budget = 100
+	}
+	if candidateLimit > 0 {
+		budget = min(budget, candidateLimit)
+	}
+	limitPages := budget / batchSize
+	key := fmt.Sprintf("%s\x00%s\x00%d\x00%s\x00%d\x00%d", user.FnOSGUID, scope, g.revision(), keyword, batchSize, budget)
 	g.searchMu.Lock()
 	if g.searches == nil {
 		g.searches = map[string]*searchPool{}
@@ -87,12 +99,6 @@ func (g *Gateway) searchWindowSized(ctx context.Context, user provider.User, sou
 	g.searchMu.Unlock()
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
-	limitPages := c.MaxPages
-	if !c.DeepPage {
-		limitPages = 1
-	}
-	// Preserve the configured candidate budget of 100 raw hits per nominal page.
-	limitPages *= 100 / batchSize
 	for !pool.done && len(pool.tracks) < start+count && pool.pages < limitPages {
 		result, e := source.Search(ctx, user, provider.SearchRequest{Keyword: keyword, Offset: pool.offset, Limit: batchSize})
 		if e != nil {

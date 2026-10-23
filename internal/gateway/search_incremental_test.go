@@ -202,9 +202,9 @@ func TestOfficialWebSearchWithoutPaginationIsNotTruncatedAt50(t *testing.T) {
 				t.Fatal("explicit first page was not loaded on demand", len(first), total, source.calls.Load())
 			}
 			all, total := request("")
-			want, calls := 120, int64(6)
+			want, calls := 100, int64(8)
 			if interrupted {
-				want, calls = 60, 4
+				want, calls = 60, 7
 			}
 			if len(all) != want || total != want || source.calls.Load() != calls {
 				t.Fatal("unpaged Web response was truncated or advertised inaccessible rows", len(all), total, source.calls.Load())
@@ -218,9 +218,120 @@ func TestOfficialWebSearchWithoutPaginationIsNotTruncatedAt50(t *testing.T) {
 				}
 			}
 			second, total := request("&page=2&size=50")
-			if !reflect.DeepEqual(second, all[50:min(100, len(all))]) || total != want || source.calls.Load() != calls {
+			pagedWant, pagedTotal, pagedCalls := 50, 120, calls+2
+			if interrupted {
+				pagedWant, pagedTotal, pagedCalls = 10, 60, calls+1
+			}
+			if len(second) != pagedWant || total != pagedTotal || source.calls.Load() != pagedCalls || !reflect.DeepEqual(second, all[50:min(100, len(all))]) {
 				t.Fatal("explicit pagination no longer works after an unpaged request", len(second), total)
 			}
 		})
+	}
+}
+
+func TestQuickSearchCapsEachSourceAndReusesOfficialResults(t *testing.T) {
+	var localCalls atomic.Int64
+	g := incrementalGateway(t, func(w http.ResponseWriter, r *http.Request) {
+		localCalls.Add(1)
+		rows := []map[string]any{}
+		for i := 0; i < 120; i++ {
+			rows = append(rows, map[string]any{"guid": fmt.Sprintf("local-%d", i), "title": fmt.Sprintf("Hit %d", i)})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"list": rows, "total": 120}})
+	})
+	sources := []provider.AccountSource{}
+	providers := []*incrementalSource{}
+	for _, name := range []string{"netease", "qqmusic"} {
+		name := name
+		s := &incrementalSource{name: name, search: func(_ context.Context, q provider.SearchRequest) (provider.SearchPage, error) {
+			if q.Offset+q.Limit > 100 {
+				return provider.SearchPage{}, fmt.Errorf("quick search fetched beyond 100: %+v", q)
+			}
+			rows := []provider.Track{}
+			for i := q.Offset; i < q.Offset+q.Limit; i++ {
+				id := fmt.Sprint(i + 1)
+				if name == "qqmusic" {
+					id = fmt.Sprintf("%014d", i+1)
+				}
+				rows = append(rows, provider.Track{ID: id, Source: name, Title: fmt.Sprintf("Hit %d", i), Playable: true})
+			}
+			return provider.SearchPage{Tracks: rows, Total: 1000, HasMore: true}, nil
+		}}
+		providers = append(providers, s)
+		sources = append(sources, provider.AccountSource{Adapter: s, Scope: name})
+	}
+	g.SetAccounts(rankedSourcesResolver{sources: sources})
+	r := httptest.NewRequest("GET", "http://localhost/music/api/v1/search/track?q=Hit", nil)
+	w := httptest.NewRecorder()
+	g.search(w, r, provider.User{FnOSGUID: "alice", Verified: true}, providers[0], "netease", "Hit")
+	var body struct {
+		Data struct {
+			List  []map[string]any
+			Total int
+		}
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err, w.Body.String())
+	}
+	if w.Code != 200 || len(body.Data.List) != 300 || body.Data.Total != 300 || localCalls.Load() != 1 {
+		t.Fatal(w.Code, len(body.Data.List), body.Data.Total, localCalls.Load())
+	}
+	counts := map[string]int{}
+	for _, row := range body.Data.List {
+		title := row["title"].(string)
+		switch {
+		case strings.HasPrefix(title, "[网易云]"):
+			counts["netease"]++
+		case strings.HasPrefix(title, "[QQ音乐]"):
+			counts["qqmusic"]++
+		default:
+			counts["local"]++
+		}
+	}
+	for _, name := range []string{"netease", "qqmusic", "local"} {
+		if counts[name] != 100 {
+			t.Fatal("per-source limit not enforced", counts)
+		}
+	}
+	for _, p := range providers {
+		if p.calls.Load() != 5 {
+			t.Fatal(p.name, p.calls.Load())
+		}
+	}
+	if w.Header().Get("X-FnMusic-Search-Mode") != "quick" || !strings.Contains(w.Header().Get("Server-Timing"), "merge;dur=") {
+		t.Fatal("missing timing diagnostics", w.Header())
+	}
+}
+
+func TestQuickSearchDeadlineCoversAllBatches(t *testing.T) {
+	g := incrementalGateway(t, emptyLocalSearch)
+	source := &incrementalSource{name: "netease", search: func(ctx context.Context, q provider.SearchRequest) (provider.SearchPage, error) {
+		select {
+		case <-time.After(800 * time.Millisecond):
+		case <-ctx.Done():
+			return provider.SearchPage{}, ctx.Err()
+		}
+		rows := []provider.Track{}
+		for i := q.Offset; i < q.Offset+q.Limit; i++ {
+			rows = append(rows, provider.Track{ID: fmt.Sprint(i + 1), Source: "netease", Title: fmt.Sprintf("Hit %d", i), Playable: true})
+		}
+		return provider.SearchPage{Tracks: rows, Total: 1000, HasMore: true}, nil
+	}}
+	r := httptest.NewRequest("GET", "http://localhost/music/api/v1/search/track?q=Hit", nil)
+	w := httptest.NewRecorder()
+	started := time.Now()
+	g.search(w, r, provider.User{FnOSGUID: "alice", Verified: true}, source, "ne", "Hit")
+	elapsed := time.Since(started)
+	var body struct {
+		Data struct {
+			List  []json.RawMessage
+			Total int
+		}
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err, w.Body.String())
+	}
+	if w.Code != 200 || len(body.Data.List) == 0 || len(body.Data.List) >= 100 || len(body.Data.List) != body.Data.Total || elapsed > 4*time.Second {
+		t.Fatal("batch deadlines accumulated", w.Code, len(body.Data.List), body.Data.Total, elapsed)
 	}
 }

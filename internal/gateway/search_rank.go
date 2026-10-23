@@ -17,6 +17,24 @@ import (
 
 const rankedSearchBatch = 20
 const searchSourceTimeout = 3 * time.Second
+const unpagedSearchTimeout = 3 * time.Second
+const unpagedSourceBudget = 100
+
+type localSearchSeed struct {
+	rows         []json.RawMessage
+	start, total int
+}
+
+func (s *localSearchSeed) window(offset int) ([]json.RawMessage, int, bool) {
+	if s == nil {
+		return nil, 0, false
+	}
+	end := min(offset+rankedSearchBatch, s.total)
+	if offset < s.start || offset > end || end > s.start+len(s.rows) {
+		return nil, 0, false
+	}
+	return s.rows[offset-s.start : end-s.start], s.total, true
+}
 
 type rankedSourceState struct {
 	offset, total int
@@ -131,6 +149,16 @@ func rankSearch(keyword string, candidates []searchCandidate) []json.RawMessage 
 // Extend a stable prefix in small batches. Only newly fetched candidates are
 // ranked; previously returned rows never move when another batch arrives.
 func (g *Gateway) rankedSearch(ctx context.Context, r *http.Request, user provider.User, source provider.Adapter, scope, keyword string) ([]json.RawMessage, int, error) {
+	return g.rankedSearchSeeded(ctx, r, user, source, scope, keyword, nil)
+}
+
+func (g *Gateway) rankedSearchSeeded(ctx context.Context, r *http.Request, user provider.User, source provider.Adapter, scope, keyword string, localSeed *localSearchSeed) ([]json.RawMessage, int, error) {
+	quick := unpagedSearch(r)
+	if quick {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, unpagedSearchTimeout)
+		defer cancel()
+	}
 	cfg := g.policy()
 	sources := g.sourcesFor(user)
 	if len(sources) == 0 && g.accounts == nil && g.online == nil {
@@ -148,6 +176,11 @@ func (g *Gateway) rankedSearch(ctx context.Context, r *http.Request, user provid
 	filters.Del("page")
 	filters.Del("size")
 	key := fmt.Sprintf("%s\x00%s\x00%d\x00%s\x00%s\x00%s\x00%s", user.FnOSGUID, scope, g.revision(), r.URL.Path, keyword, filters.Encode(), strings.Join(sourceKeys, "\x01"))
+	// Quick Web searches have a smaller budget; never let their exhausted state
+	// prevent an explicitly paged client from fetching deeper results.
+	if quick {
+		key += "\x00quick"
+	}
 	g.searchMu.Lock()
 	if g.rankedSearches == nil {
 		g.rankedSearches = map[string]*rankedSearchPool{}
@@ -185,7 +218,8 @@ func (g *Gateway) rankedSearch(ctx context.Context, r *http.Request, user provid
 		pages = 1
 	}
 	budget := pages * 100
-	if unpagedSearch(r) {
+	if quick {
+		budget = min(budget, unpagedSourceBudget)
 		needed = budget * (len(selected) + 1)
 	}
 	if pool.states == nil || (pool.partial && page == 1 && !time.Now().Before(pool.retryAfter)) {
@@ -211,10 +245,14 @@ func (g *Gateway) rankedSearch(ctx context.Context, r *http.Request, user provid
 				fetchCtx, cancel := context.WithTimeout(ctx, searchSourceTimeout)
 				defer cancel()
 				if i == 0 {
+					if rows, total, ok := localSeed.window(state.offset); ok {
+						localRows, results[i].Total = rows, total
+						return
+					}
 					localRows, results[i].Total, errs[i] = g.localSearchBatch(fetchCtx, r, state.offset)
 				} else {
 					s := selected[i-1]
-					results[i], errs[i] = g.searchWindowSized(fetchCtx, user, s.Adapter, s.Scope, keyword, state.offset, rankedSearchBatch, rankedSearchBatch)
+					results[i], errs[i] = g.searchWindowLimited(fetchCtx, user, s.Adapter, s.Scope, keyword, state.offset, rankedSearchBatch, rankedSearchBatch, budget)
 				}
 			}(i, state)
 		}

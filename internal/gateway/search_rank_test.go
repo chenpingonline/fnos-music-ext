@@ -255,7 +255,7 @@ func TestRankedSearchSnapshotPaginationAndIsolation(t *testing.T) {
 	if len(ids) != 108 {
 		t.Fatal("missing rows", len(ids))
 	}
-	r := httptest.NewRequest("GET", "http://localhost/music/api/v1/search/track?q=晴天", nil)
+	r := httptest.NewRequest("GET", "http://localhost/music/api/v1/search/track?q=晴天&page=1&size=100", nil)
 	for _, identity := range []struct{ user, scope string }{{"bob", "account"}, {"alice", "other-account"}} {
 		rows, total, err := g.rankedSearch(context.Background(), r, provider.User{FnOSGUID: identity.user, Verified: true}, source, identity.scope, "晴天")
 		if err != nil || total != 108 || !strings.Contains(string(rows[3]), "已变化") {

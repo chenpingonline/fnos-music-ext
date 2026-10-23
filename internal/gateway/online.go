@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/chenpingonline/fnos-music-ext/internal/diagnostics"
 	"io"
 	"net/http"
@@ -251,8 +252,13 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 	if len([]rune(keyword)) > 120 {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(g.policy().SearchTimeout)*time.Second)
+	searchTimeout := time.Duration(g.policy().SearchTimeout) * time.Second
+	if unpagedSearch(r) {
+		searchTimeout = min(searchTimeout, unpagedSearchTimeout)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
 	defer cancel()
+	localStarted := time.Now()
 	// Fetch official response first, preserve it byte-for-byte if source fails.
 	req := r.Clone(ctx)
 	u := *r.URL
@@ -293,7 +299,13 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 		writeOfficial(w, resp, b)
 		return true
 	}
-	rows, total, err := g.rankedSearch(ctx, r, user, source, accountID, keyword)
+	localDuration := time.Since(localStarted)
+	seed := &localSearchSeed{rows: body.Data.List, total: body.Data.Total, start: (page - 1) * size}
+	if unpagedSearch(r) || len(seed.rows) > size {
+		seed.start = 0
+	}
+	mergeStarted := time.Now()
+	rows, total, err := g.rankedSearchSeeded(ctx, r, user, source, accountID, keyword, seed)
 	if err != nil {
 		diagnostics.Record("search", accountID, err)
 		writeOfficial(w, resp, b)
@@ -322,6 +334,10 @@ func (g *Gateway) search(w http.ResponseWriter, r *http.Request, user provider.U
 	envelope["data"], _ = json.Marshal(data)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Server-Timing", fmt.Sprintf("local;dur=%.1f, merge;dur=%.1f", float64(localDuration.Microseconds())/1000, float64(time.Since(mergeStarted).Microseconds())/1000))
+	if unpagedSearch(r) {
+		w.Header().Set("X-FnMusic-Search-Mode", "quick")
+	}
 	_ = json.NewEncoder(w).Encode(envelope)
 	return true
 }
